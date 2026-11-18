@@ -104,29 +104,55 @@ def validate_result(instance: dict, input_instance: dict) -> None:
     """Validate all outcomes and recompute comparable adsorption energies."""
     validate_input(input_instance)
     validate_payload("adsorption.result.schema.json", instance)
-    clean = input_instance["clean_slab"]
-    gas = {run["structure_id"]: run for run in input_instance["gas_references"]}
     outcomes = {result["structure_id"]: result for result in instance["results"]}
-    configurations = input_instance["configurations"]
+    expected = _outcomes(input_instance)
     require(len(outcomes) == len(instance["results"])
-            and outcomes.keys() == {config["structure_id"] for config in configurations},
+            and outcomes.keys() == {item["structure_id"] for item in expected},
             "Results must cover each configuration exactly once")
-    for config in configurations:
-        result = outcomes[config["structure_id"]]
-        references = [(gas[key], Fraction(str(coefficient)))
-                      for key, coefficient in config["reference_coefficients"].items()]
-        reasons = set(_reasons(input_instance, config, references))
+    for item in expected:
+        structure_id = item["structure_id"]
+        result = outcomes[structure_id]
+        reasons = item.get("reasons")
         if reasons:
-            require(result["status"] == "noncomparable" and set(result["reasons"]) == reasons,
-                    f"{config['structure_id']} requires noncomparable outcome: {sorted(reasons)}")
+            require(result["status"] == "noncomparable" and set(result["reasons"]) == set(reasons),
+                    f"{structure_id} requires noncomparable outcome: {sorted(reasons)}")
             continue
 
         require(result["status"] == "comparable",
-                f"{config['structure_id']} requires comparable outcome")
-        cell_energy = Fraction(str(config["energy_eV"])) - Fraction(str(clean["energy_eV"]))
+                f"{structure_id} requires comparable outcome")
+        candidate = Fraction(str(result["adsorption_energy"]))
+        require(abs(candidate - item["adsorption_energy"]) <= Fraction("0.001"),
+                f"{structure_id} adsorption energy disagrees with input energies")
+
+
+def _outcomes(instance):
+    clean = instance["clean_slab"]
+    gas = {run["structure_id"]: run for run in instance["gas_references"]}
+    clean_energy = Fraction(str(clean["energy_eV"]))
+    outcomes = []
+    for config in instance["configurations"]:
+        references = [(gas[key], Fraction(str(coefficient)))
+                      for key, coefficient in config["reference_coefficients"].items()]
+        outcome = {"structure_id": config["structure_id"]}
+        reasons = list(_reasons(instance, config, references))
+        if reasons:
+            outcomes.append(dict(outcome, status="noncomparable", reasons=reasons))
+            continue
+
+        cell_energy = Fraction(str(config["energy_eV"])) - clean_energy
         gas_energy = sum(coefficient * Fraction(str(run["energy_eV"]))
                          for run, coefficient in references)
         energy = (cell_energy - gas_energy) / config["adsorbed_units"]
-        candidate = Fraction(str(result["adsorption_energy"]))
-        require(abs(candidate - energy) <= Fraction("0.001"),
-                f"{config['structure_id']} adsorption energy disagrees with input energies")
+        outcomes.append(dict(outcome, status="comparable", normalization="per_adsorbate",
+                             unit="eV", adsorption_energy=energy))
+    return outcomes
+
+
+def derive_result(instance: dict) -> dict:
+    """Compute v1 results from validated adsorption inputs."""
+    validate_input(instance)
+    outcomes = _outcomes(instance)
+    for outcome in outcomes:
+        if outcome["status"] == "comparable":
+            outcome["adsorption_energy"] = float(outcome["adsorption_energy"])
+    return {"results": outcomes}

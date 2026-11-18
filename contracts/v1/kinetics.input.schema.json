@@ -74,6 +74,7 @@
               },
               "relative_uncertainty": {
                 "type": "number",
+                "description": "Measured relative uncertainty, when available. Omit if unavailable.",
                 "exclusiveMinimum": 0
               },
               "quality": {
@@ -88,7 +89,6 @@
               "partition",
               "temperature_K",
               "value",
-              "relative_uncertainty",
               "quality"
             ],
             "additionalProperties": false
@@ -178,6 +178,7 @@
               },
               "relative_uncertainty": {
                 "type": "number",
+                "description": "Measured relative uncertainty, when available. Omit if unavailable.",
                 "exclusiveMinimum": 0
               },
               "quality": {
@@ -208,7 +209,6 @@
               "partition",
               "temperature_K",
               "value",
-              "relative_uncertainty",
               "quality",
               "concentrations",
               "conversion_fraction"

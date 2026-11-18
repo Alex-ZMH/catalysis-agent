@@ -25,3 +25,15 @@
 !/scripts/frontend_baseline.py
 !/baselines/
 !/baselines/frontend.lock.json
+!/apps/
+!/apps/__init__.py
+!/apps/server.py
+!/apps/web/
+!/apps/web/analysis.js
+!/apps/web/analysis.css
+!/docs/cell.md
+!/docs/kinetics-import.md
+!/docs/vasp-import.md
+!/docs/file-analysis.md
+!/tests/browser_workbench.cjs
+!/scripts/synthetic_inputs.py
