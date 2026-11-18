@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const kindLabel = { adsorption: "VASP 吸附能", kinetics: "动力学拟合", md: "LAMMPS 轨迹", equipment: "VTU 场与线剖面" };
+  const kindLabel = { md_thermo: "LAMMPS 热力学曲线", md_msd: "原子组 MSD 与扩散", adsorption: "VASP 吸附能", kinetics: "动力学拟合", md: "LAMMPS 轨迹", equipment: "VTU 场与线剖面" };
   const rawKind = kind => kind === "md" || kind === "equipment";
   const originLabel = { synthetic: "合成数据", research: "研究数据" };
   const modelLabel = { arrhenius_known_k: "Arrhenius（已测速率常数）", initial_rate_power_law: "初始速率幂律" };
@@ -181,6 +181,127 @@
     table.append(element("caption", caption), head, body);
     wrapper.append(table);
     return wrapper;
+  }
+
+function lineChart(title, series, xLabel, yLabel) {
+    const wrap = element("figure", null, "ca-md-chart");
+    wrap.append(element("figcaption", title));
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 620 245");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", title + "；" + xLabel + "；" + yLabel);
+    const points = series.flatMap(s => s.points).filter(p => p.every(Number.isFinite));
+    if (!points.length) { wrap.append(element("p", "该列没有数值输出。")); return wrap; }
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    for (const [x,y] of points) { xmin=Math.min(xmin,x); xmax=Math.max(xmax,x); ymin=Math.min(ymin,y); ymax=Math.max(ymax,y); }
+    if (xmin === xmax) { xmin -= 0.5; xmax += 0.5; }
+    const pad = (ymax - ymin) * 0.08 || Math.abs(ymax) * 0.02 || 1;
+    ymin -= pad; ymax += pad;
+    const px = x => 82 + (x-xmin)/(xmax-xmin)*510;
+    const py = y => 192 - (y-ymin)/(ymax-ymin)*158;
+    const node = (tag, attrs, text) => {
+      const n = document.createElementNS(ns, tag);
+      for (const [k,v] of Object.entries(attrs)) n.setAttribute(k,v);
+      if (text != null) n.textContent = text;
+      svg.append(n); return n;
+    };
+    const tick = n => Math.abs(n) !== 0 && (Math.abs(n)<0.001 || Math.abs(n)>99999) ? n.toExponential(2) : String(Number(n.toPrecision(4)));
+    for (let i=0;i<=4;i++) {
+      const x = xmin+(xmax-xmin)*i/4, y=ymin+(ymax-ymin)*i/4;
+      node("line",{x1:82,y1:py(y),x2:592,y2:py(y),stroke:"currentColor",opacity:0.13});
+      node("text",{x:74,y:py(y)+4,"text-anchor":"end",fill:"currentColor","font-size":11},tick(y));
+      node("text",{x:px(x),y:211,"text-anchor":"middle",fill:"currentColor","font-size":11},tick(x));
+    }
+    node("text",{x:337,y:237,"text-anchor":"middle",fill:"currentColor","font-size":12},xLabel);
+    node("text",{x:82,y:17,fill:"currentColor","font-size":12},yLabel);
+    const colors = ["#69d9c0","#ffbe78","#7cafff","#e7a3dd"];
+    series.forEach((s,i) => {
+      const color=s.color||colors[i%colors.length];
+      const valid=s.points.filter(p=>p.every(Number.isFinite));
+      const attrs={points:valid.map(([x,y])=>px(x)+","+py(y)).join(" "),fill:"none",stroke:color,"stroke-width":2};
+      if(s.dashed) attrs["stroke-dasharray"]="6 4";
+      node("polyline",attrs);
+      for(const [x,y] of valid) {
+        const dot=node("circle",{cx:px(x),cy:py(y),r:3,fill:color});
+        const tip=document.createElementNS(ns,"title"); tip.textContent=s.label+": "+formatNumber(x)+", "+formatNumber(y); dot.append(tip);
+      }
+    });
+    wrap.append(svg);
+    const legend=element("div",null,"ca-md-legend");
+    series.forEach((s,i)=>{const item=element("span",s.label); item.style.color=s.color||colors[i%colors.length];legend.append(item);});
+    wrap.append(legend); return wrap;
+  }
+
+function renderMdAnalysis(run, target) {
+    const r=run.result;
+    const section=element("section");
+    section.id="analysis-"+run.kind+"-result";
+    const job=run.details?.source_job_id;
+    if(job) section.append(element("p","来源作业号："+job+" · "+run.filename,"ca-origin"));
+    if(run.kind==="md_thermo") {
+      section.append(metrics([["原始采样点",r.rows.length],["LAMMPS 单位制",r.unit_style]]));
+      const timeKey=r.columns.find(k=>k.toLowerCase()==="time");
+      const stepKey=r.columns.find(k=>k.toLowerCase()==="step");
+      const dt=run.details?.parameters?.timestep_ps;
+      const physical=!!timeKey || (Number.isFinite(dt) && !!stepKey);
+      const xLabel=physical?"时间（ps）":"时间步（step）";
+      const timeScale=r.unit_style==="real"?0.001:1;
+      const x=row=>timeKey?row[timeKey]*timeScale:physical?row[stepKey]*dt:row[stepKey];
+      const available=r.columns.filter(k=>!["time","step"].includes(k.toLowerCase()));
+      const labels={Temp:"温度",Press:"压力",PotEng:"势能",KinEng:"动能",TotEng:"总能"};
+      const seriesFor=key=>{
+        const blocks=r.blocks?.length?r.blocks:[{start_row:0,end_row:r.rows.length}];
+        return blocks.map((block,index)=>({
+          label:(labels[key]||key)+(blocks.length>1?" · 段 "+(index+1):""),
+          points:r.rows.slice(block.start_row,block.end_row).map(row=>[x(row),row[key]]),
+        }));
+      };
+      const grid=element("div",null,"ca-md-charts");
+      for(const key of ["Temp","Press","PotEng","TotEng"].filter(k=>available.includes(k))) {
+        grid.append(lineChart(labels[key]+" · "+key,seriesFor(key),xLabel,r.units[key]??"原始单位未标注"));
+      }
+      section.append(grid);
+      const control=element("label","查看输出列");
+      const select=element("select");select.id="analysis-thermo-column";
+      available.forEach(key=>select.append(new Option(key+" · "+(r.units[key]??"单位未标注"),key)));
+      control.append(select);
+      const chosen=element("div",null,"ca-md-primary");
+      const draw=()=>chosen.replaceChildren(lineChart(labels[select.value]||select.value,seriesFor(select.value),xLabel,r.units[select.value]??"单位未标注"));
+      select.addEventListener("change",draw); if(available.length) draw();
+      const more=element("details");more.append(element("summary","其他输出列与原始数值"),control,chosen,
+        pager("analysis-thermo-table","采样数据",r.rows.length,50,(body,start,end)=>{
+          body.append(dataTable("原始 thermo 输出",r.columns.map(k=>k+(r.units[k]?"（"+r.units[k]+"）":"")),
+            r.rows.slice(start,end).map(row=>r.columns.map(k=>formatNumber(row[k])))));
+        }).container);
+      section.append(more);
+    } else {
+      const f=r.fit, selection=r.selection;
+      const drift=r.remove_drift?(r.drift_weighting==="equal"?"扣除所选组等权平均位移":"扣除所选组质心位移"):"保留原始位移";
+      section.append(metrics([
+        ["所选原子数",selection.atom_count],["方向 / 维数",r.axes+" / "+r.dimension],
+        ["原子 ID", (selection.selected_atom_ids||selection.atom_ids)?.join(", ")||"按类型 / 全部"],
+        ["原子类型",selection.atom_types?.join(", ")||"全部类型"],
+        ["时间参考","首帧 · step "+r.time_origin.step],["漂移处理",drift],
+        ["拟合区间",formatNumber(f.start_ps)+"–"+formatNumber(f.end_ps)+" ps · "+f.n_points+" 点"],
+        ["扩散系数 D",formatNumber(f.diffusion_m2_per_s)+" m²/s"],
+        ["D（Å²/ps）",formatNumber(f.diffusion_a2_per_ps)],
+        ["斜率 / 截距",formatNumber(f.slope_a2_per_ps)+" Å²/ps / "+formatNumber(f.intercept_a2)+" Å²"],
+      ]));
+      const curves=element("div",null,"ca-md-primary");
+      const fitTimes=r.rows.map(row=>row.time_ps).filter(t=>t>=f.start_ps&&t<=f.end_ps);
+      const lo=Math.min(...fitTimes),hi=Math.max(...fitTimes);
+      curves.append(lineChart("所选原子组 · MSD 与线性拟合",[
+        {label:"原始位移计算的 MSD",points:r.rows.map(row=>[row.time_ps,row.msd_a2])},
+        {label:"所选区间拟合",dashed:true,points:[lo,hi].map(t=>[t,f.slope_a2_per_ps*t+f.intercept_a2])},
+      ],"相对首帧时间（ps）","MSD（Å²）"));
+      section.append(curves,element("p","单一起点 MSD；D = slope / (2d)。以上为当前时间窗口的计算值。","ca-muted"),
+        pager("analysis-msd-table","MSD 采样点",r.rows.length,50,(body,start,end)=>{
+          body.append(dataTable("逐帧 MSD",["Step","相对时间（ps）","MSD（Å²）"],
+            r.rows.slice(start,end).map(row=>[identifierLabel(row.step),formatNumber(row.time_ps),formatNumber(row.msd_a2)])));
+        }).container);
+    }
+    target.append(section);
   }
 
   function renderMD(run, target) {
@@ -383,6 +504,7 @@
       renderAdsorption(run, target);
       renderDftHandoff(run, target);
     }
+    if (run.kind === "md_thermo" || run.kind === "md_msd") renderMdAnalysis(run, target);
     if (run.kind === "kinetics") {
       const summary = [
         ["模型", modelLabel[result.model] ?? result.model],
@@ -436,7 +558,6 @@
       row.append(
         downloadLink(artifact.url, artifact.name ?? artifact.id),
         element("small", `${label} · ${artifact.size_bytes} 字节 · ${artifact.id}`),
-        element("code", `SHA-256 ${artifact.sha256}`),
       );
       if (artifact.parents?.length) row.append(element("small", `上游工件：${artifact.parents.join("、")}`));
       artifacts.append(row);
@@ -669,7 +790,7 @@
         <div class="ca-grid">
           <label>分析类型<select id="analysis-kind" name="kind">
             <option value="adsorption">VASP 吸附能</option><option value="kinetics">动力学拟合</option>
-            <option value="md">LAMMPS 轨迹</option><option value="equipment">VTU 场与线剖面</option>
+            <option value="md_thermo">LAMMPS 热力学曲线</option><option value="md_msd">原子组 MSD 与扩散</option><option value="md">LAMMPS 轨迹</option><option value="equipment">VTU 场与线剖面</option>
           </select></label>
           <label>数据来源<select id="analysis-origin" name="origin">
             <option value="synthetic" selected>合成数据</option><option value="research">研究数据</option>
@@ -677,6 +798,26 @@
         </div>
         <label>上传文件<input id="analysis-upload" name="file" type="file" required></label>
         <p id="analysis-file-hint" class="ca-muted"></p>
+        <fieldset id="analysis-md-analysis" hidden disabled>
+          <legend>MD 输出分析</legend>
+          <div class="ca-grid">
+            <label>LAMMPS 单位制<select name="md_unit_style"><option value="">读取文件标记</option><option value="metal">metal · Å / ps / eV / bar</option><option value="real">real · Å / fs / kcal/mol / atm</option></select></label>
+            <label>时间步长（ps / step）<input name="md_timestep_ps" type="number" min="0" step="any" placeholder="轨迹无 ITEM: TIME 时填写"></label>
+            <label>来源作业号（可选）<input name="md_source_job_id" placeholder="例如 Slurm 作业号"></label>
+          </div>
+          <fieldset id="analysis-msd-config" hidden disabled>
+            <legend>原子组与扩散拟合</legend>
+            <div class="ca-grid">
+              <label>原子 ID（逗号分隔）<input name="md_atom_ids" placeholder="留空选择全部 ID"></label>
+              <label>原子类型（逗号分隔）<input name="md_atom_types" placeholder="留空选择全部类型"></label>
+              <label>统计方向<select name="md_axes"><option>xyz</option><option>xy</option><option>xz</option><option>yz</option><option>x</option><option>y</option><option>z</option></select></label>
+              <label>漂移处理<select name="md_remove_drift"><option value="false">保留原始位移</option><option value="true">扣除所选组漂移（有质量时按质量加权）</option></select></label>
+              <label>拟合起点（相对首帧，ps）<input name="md_fit_start_ps" type="number" step="any" placeholder="留空使用全部时间"></label>
+              <label>拟合终点（相对首帧，ps）<input name="md_fit_end_ps" type="number" step="any" placeholder="留空使用全部时间"></label>
+            </div>
+            <p class="ca-muted">同时填写 ID 和类型时取交集。使用首帧作为参考，按原子 ID 跟踪展开坐标；拟合 MSD = 2dDt + b，直接报告所选区间的斜率。</p>
+          </fieldset>
+        </fieldset>
         <fieldset id="analysis-a5" hidden disabled>
           <legend>原始文件配置</legend>
           <div class="ca-grid">
@@ -1147,6 +1288,9 @@
       const kind = fields.kind.value;
       const kinetics = kind === "kinetics";
       const raw = rawKind(kind);
+      const mdAnalysis = ["md_thermo", "md_msd"].includes(kind);
+      find("#analysis-md-analysis").hidden = find("#analysis-md-analysis").disabled = !mdAnalysis;
+      find("#analysis-msd-config").hidden = find("#analysis-msd-config").disabled = kind !== "md_msd";
       if (activeKind !== kind) {
         drafts.set(activeKind, {
           options: advanced.value, lengthUnit: fields.length_unit.value, reference: reference.files[0],
@@ -1165,8 +1309,10 @@
       vasp.hidden = vasp.disabled = kind !== "adsorption";
       const rawSection = find("#analysis-a5");
       rawSection.hidden = rawSection.disabled = !raw;
-      upload.accept = { adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
+      upload.accept = { md_thermo: ".log,.lammps,.jsonl,.txt", md_msd: ".lammpstrj,.dump,.lammpsdump,.traj,.txt", adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
       find("#analysis-file-hint").textContent = {
+        md_thermo: "上传原始 log.lammps 或 thermo.jsonl；按原始采样点绘图，可切换输出列。",
+        md_msd: "上传含展开坐标或坐标及镜像标记的 LAMMPS 轨迹。",
         adsorption: "上传含 study.json 和 vasprun.xml 的 VASP ZIP。",
         kinetics: "支持 CSV 或 XLSX。",
         md: "上传 LAMMPS 文本轨迹（如 .lammpstrj 或 .dump）。",
@@ -1241,6 +1387,24 @@
           }
         }
         if (Object.keys(columns).length) options.columns = columns;
+      } else if (["md_thermo", "md_msd"].includes(fields.kind.value)) {
+        if (fields.md_unit_style.value) options.unit_style = fields.md_unit_style.value;
+        if (fields.md_timestep_ps.value) options.timestep_ps = fields.md_timestep_ps.valueAsNumber;
+        if (fields.md_source_job_id.value.trim()) options.source_job_id = fields.md_source_job_id.value.trim();
+        if (fields.kind.value === "md_msd") {
+          for (const key of ["atom_ids", "atom_types"]) {
+            const value = fields["md_" + key].value.trim();
+            if (value) options[key] = value.split(/[,，\s]+/).map(v => {
+              if (!/^\d+$/.test(v)) throw new Error("原子 ID 和类型须为整数，使用逗号分隔。");
+              return v;
+            });
+          }
+          options.axes = fields.md_axes.value;
+          options.remove_drift = fields.md_remove_drift.value === "true";
+          for (const key of ["fit_start_ps", "fit_end_ps"]) {
+            if (fields["md_" + key].value) options[key] = fields["md_" + key].valueAsNumber;
+          }
+        }
       } else if (fields.length_unit.value.trim()) {
         options.length_unit = fields.length_unit.value.trim();
       }

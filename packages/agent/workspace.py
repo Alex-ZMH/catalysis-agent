@@ -7,7 +7,9 @@ from pathlib import Path
 import re
 import tempfile
 
-from packages.check import OPERATIONS
+from packages.check import OPERATIONS as BASE_OPERATIONS
+
+OPERATIONS = {**BASE_OPERATIONS, "md_thermo": "md.thermo", "md_msd": "md.msd"}
 
 
 def json_bytes(value):
@@ -105,7 +107,16 @@ class Workspace:
             return add(name, data, "derived", [raw_id])
 
         ref_id = None
-        if importing:
+        if kind in {"md_thermo", "md_msd"}:
+            from packages.science.md_analysis import analyze_thermo, analyze_msd
+            analyzer = analyze_thermo if kind == "md_thermo" else analyze_msd
+            result = analyzer(filename, content, options)
+            normalized = config
+            details = {"raw_artifact_id": raw_id, "parameters": options,
+                       "source_job_id": options.get("source_job_id"),
+                       "analysis": "direct-output"}
+            input_ids = [raw_id]
+        elif importing:
             from packages.science import field_probe, lammps
             reference_input = None
             input_ids = [raw_id]
@@ -142,7 +153,7 @@ class Workspace:
                         outputs=[out_id, detail_id], artifacts=list(records.values()),
                         quality=quality, quality_flags=sorted(flags))
         summary = dict(id=run_id, kind=kind, origin=origin, created_at=now, filename=filename)
-        index = dict(names=names, raw=raw_id, input=cfg_id if importing else input_ids[0],
+        index = dict(names=names, raw=raw_id, input=cfg_id if importing or kind in {"md_thermo", "md_msd"} else input_ids[0],
                      result=out_id, details=detail_id)
         if ref_id is not None:
             index["reference_id"] = ref_id

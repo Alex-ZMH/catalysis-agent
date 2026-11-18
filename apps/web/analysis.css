@@ -119,3 +119,12 @@
 #studio #a1-session form { margin-top: 0; padding-top: 0; border: 0; }
 #studio #a1-project-controls { min-width: min(14rem, 100%); }
 #studio #a1-backup-list { padding-inline-start: 24px; }
+
+#studio .ca-md-charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+#studio .ca-md-chart { margin:0; padding:12px; background:var(--wb-bg); border:1px solid var(--wb-line); border-radius:8px; min-width:0; }
+#studio .ca-md-chart figcaption { font-weight:600; margin-bottom:6px; }
+#studio .ca-md-chart svg { width:100%; height:auto; display:block; }
+#studio .ca-md-legend { display:flex; gap:14px; font-size:12px; flex-wrap:wrap; }
+#studio .ca-md-primary { margin:12px 0; }
+#studio .ca-md-primary .ca-md-chart { max-width:950px; }
+@media(max-width:900px) { #studio .ca-md-charts {grid-template-columns:1fr;} }
