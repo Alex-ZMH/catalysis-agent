@@ -23,6 +23,7 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 from jsonschema import ValidationError
 from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.egress import restrict_egress
+from packages.agent.md_slurm import MDSlurm, SchedulerUnavailable, SlurmBroker
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import Workspace, json_bytes
 from scripts.frontend_baseline import git as baseline_git
@@ -79,6 +80,7 @@ def form_fields(headers, data, *, md_job=False):
 
 
 PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})(?:/(confirm|reconcile))?")
+MD_PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/(status|cancel|restart|artifacts/([A-Za-z0-9.]+))")
 PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
               "equipment-simulation": "equipment"}
 
@@ -97,6 +99,7 @@ ACTIONS = {
     (True, "/api/cell"): "project.cell.check",
     (True, "/api/md-handoff"): "project.structure.convert",
     (True, "/api/md-job"): "project.md.prepare",
+    (True, "/api/md-job/plan"): "project.md.plan",
     (True, "/api/plans"): "project.plan.create",
 }
 
@@ -112,6 +115,9 @@ def access_action(path, post):
         if artifact_id:
             return "project.artifact.read", {**ids, "artifact_id": artifact_id}
         return "project.manifest.read" if suffix else "project.run.read", ids
+    if (plan := MD_PLAN_PATH.fullmatch(path)) and post == (plan[2] in {"cancel", "restart"}):
+        action = "artifact" if plan[3] else plan[2]
+        return "project.md." + action, {"plan_id": plan[1]}
     if (plan := PLAN_PATH.fullmatch(path)) and post == bool(plan[2]):
         return "project.plan." + (plan[2] or "read"), {"plan_id": plan[1]}
     if not post and (receipt := RECEIPT_PATH.fullmatch(path)):
@@ -215,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
                 assert_project_layout(self.server.data_dir, self.audit_event["project"])
                 self.workspace, self.approvals, self.receipts = project_state(
                     self.server.data_dir, self.audit_event["project"],
-                    self.audit_event["actor"], self.server.commit, False
+                    self.audit_event["actor"], self.server.commit, False, self.server.md_broker
                 )
                 self.synthetic_submission = False
             else:
@@ -227,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._post(path)
             else:
                 self._get(path)
+        except SchedulerUnavailable as error:
+            self._send(503, json_bytes({"error": str(error)[:800]}))
         except RestoredApprovalError as error:
             self._send(409, json_bytes({"error": str(error)}))
         except FileNotFoundError:
@@ -372,7 +380,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/plans":
             approvals = self.approvals
             plans = approvals.list()
-            listing = {"plans": plans, "synthetic_submission": self.synthetic_submission}
+            listing = {"plans": plans, "synthetic_submission": self.synthetic_submission,
+                       "md_submission": approvals.md_scheduler is not None}
             if approvals.recovery:
                 listing["recovery"] = approvals.recovery
                 listing["receipt_plan_ids"] = [
@@ -381,6 +390,19 @@ class Handler(BaseHTTPRequestHandler):
                     and self.receipts.result_path(plan).is_file()
                 ]
             self._send(200, json_bytes(listing))
+            return
+        if (md := MD_PLAN_PATH.fullmatch(path)) and (md[2] == "status" or md[3]):
+            scheduler, record = self._md_plan(md[1])
+            if md[3]:
+                stream, size = scheduler.artifact(record, md[3])
+                with stream:
+                    if self._headers(200, size, "application/octet-stream", md[3]):
+                        remaining = size
+                        while remaining and (chunk := stream.read(min(1024 * 1024, remaining))):
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+            else:
+                self._send_md_status(scheduler.status(record))
             return
         receipt = RECEIPT_PATH.fullmatch(path)
         if receipt:
@@ -454,6 +476,33 @@ class Handler(BaseHTTPRequestHandler):
             record = approvals.reconcile(match[1])
         self._send(200, json_bytes(record))
 
+    def _md_plan(self, plan_id):
+        scheduler = self.approvals.md_scheduler
+        record = self.approvals.get(plan_id)
+        if scheduler is None or record["spec"]["mode"] != "slurm-md":
+            raise FileNotFoundError()
+        return scheduler, record
+
+    def _send_md_status(self, result):
+        if self.server.access is not None:
+            prefix = "/api/projects/" + self.audit_event["project"]
+            for artifact in result["artifacts"]:
+                artifact["url"] = prefix + artifact["url"][4:]
+        self._send(200, json_bytes(result))
+
+    def _md_plan_action(self, match):
+        if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+            self._send(403, json_bytes({"error": "请从同源工作台提交请求。"}))
+            return
+        scheduler, plan = self._md_plan(match[1])
+        body = self._json_body()
+        if match[2] == "cancel":
+            if body.keys() != {"confirmed"} or body["confirmed"] is not True:
+                raise ValueError("Cancel requires explicit confirmation")
+            self._send_md_status(scheduler.cancel(plan))
+        else:
+            self._send(200, json_bytes(scheduler.restart(self.approvals, plan, body)))
+
     def _md_handoff(self, name, raw, options, provenance=None):
         from packages.science.md_handoff import export_structure
 
@@ -468,9 +517,7 @@ class Handler(BaseHTTPRequestHandler):
                               "units metal\natom_style atomic\nboundary p p p\nread_data structure.data\n")
         self._send(200, package.getvalue(), "application/zip", "vasp-to-lammps.zip")
 
-    def _prepare_md_job(self, fields):
-        from packages.science.md_job import build_job
-
+    def _md_job_source(self, fields):
         structure = fields.get("file")
         run_id, artifact_id = fields.get("run_id"), fields.get("artifact_id")
         provenance = {"project_id": self.workspace.project, "operator_id": self.workspace.operator,
@@ -492,16 +539,30 @@ class Handler(BaseHTTPRequestHandler):
         potential = fields.get("potential")
         if potential is not None:
             provenance["potential_filename"] = potential[0]
-        package = build_job(name.rsplit("/", 1)[-1], raw, fields["options"],
-                            potential=potential[1] if potential is not None else None, provenance=provenance)
+        return name.rsplit("/", 1)[-1], raw, potential[1] if potential is not None else None, provenance
+
+    def _prepare_md_job(self, fields):
+        from packages.science.md_job import build_job
+
+        name, raw, potential, provenance = self._md_job_source(fields)
+        package = build_job(name, raw, fields["options"], potential=potential, provenance=provenance)
         self._send(200, package, "application/zip", "lammps-md-job.zip")
 
     def _post(self, path):
+        if (md := MD_PLAN_PATH.fullmatch(path)) and md[2] in {"cancel", "restart"}:
+            self._md_plan_action(md)
+            return
         if path == "/api/plans" or path.startswith("/api/plans/"):
             self._plan_action(path)
             return
-        if path not in {"/api/runs", "/api/cell", "/api/md-handoff", "/api/md-job"}:
+        if path not in {"/api/runs", "/api/cell", "/api/md-handoff", "/api/md-job", "/api/md-job/plan"}:
             raise FileNotFoundError()
+        if path == "/api/md-job/plan":
+            if self.approvals.md_scheduler is None:
+                raise FileNotFoundError()
+            if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+                self._send(403, json_bytes({"error": "请从同源工作台提交请求。"}))
+                return
         size = int(self.headers.get("Content-Length", "-1"))
         if self.headers.get("Transfer-Encoding") or not 0 < size <= self.server.upload_limit:
             self._send(413, json_bytes({"error": f"文件表单须小于 {self.server.upload_limit // (1024*1024)} MiB。"}))
@@ -514,7 +575,14 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(size)
             if len(data) != size:
                 raise ValueError("上传提前结束。")
-            fields = form_fields(self.headers, data, md_job=path == "/api/md-job")
+            fields = form_fields(self.headers, data, md_job=path in {"/api/md-job", "/api/md-job/plan"})
+            if path == "/api/md-job/plan":
+                scheduler = self.approvals.md_scheduler
+                plan = scheduler.create(self.approvals, fields["options"], lambda: self._md_job_source(fields))
+                if self.audit_event is not None:
+                    self.audit_event["plan_id"] = plan["id"]
+                self._send(200, json_bytes(plan))
+                return
             if path == "/api/md-job":
                 self._prepare_md_job(fields)
                 return
@@ -578,14 +646,30 @@ def mark_managed(data_dir, managed):
             os.fsync(stream.fileno())
 
 
-def project_state(data_dir, project, operator, commit, submit):
+def project_state(data_dir, project, operator, commit, submit, md_broker=None):
     store = Workspace(data_dir, project, operator, commit)
     receipts = SyntheticSlurm(store.runs.parent / "approvals" / "slurm")
-    return store, ApprovalStore(data_dir, project, operator, receipts if submit else None), receipts
+    md_scheduler = MDSlurm(data_dir, project, md_broker) if md_broker is not None else None
+    approvals = ApprovalStore(data_dir, project, operator, receipts if submit else None,
+                              md_scheduler=md_scheduler)
+    return store, approvals, receipts
+
+
+class WorkbenchServer(ThreadingHTTPServer):
+    md_broker = None
+
+    def server_close(self):
+        try:
+            super().server_close()
+        finally:
+            if self.md_broker is not None:
+                self.md_broker.close()
+                self.md_broker = None
 
 
 def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
-                synthetic_submission=False, *, access_policy=None, audit_log=None, backup_root=None):
+                synthetic_submission=False, *, access_policy=None, audit_log=None, backup_root=None,
+                md_slurm_config=None):
     if min(max_upload_mib, workers) <= 0:
         raise ValueError("Limits must be positive")
     data_dir = Path(data_dir).expanduser().absolute()
@@ -593,7 +677,7 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
     if managed != (audit_log is not None) or managed != (backup_root is not None):
         raise ValueError("Managed mode requires --access-policy, --audit-log and --backup-root together")
     if managed and synthetic_submission:
-        raise ValueError("Managed mode supports manual confirmation of plans only")
+        raise ValueError("Managed mode does not use the unmanaged synthetic GPU probe")
     access = audit = backups = None
     if managed:
         from packages.agent.access import AccessPolicy, AuditLog
@@ -610,10 +694,16 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
     mark_managed(data_dir, managed)
     assets = static_files()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    store, approvals, receipts = (None, None, None) if managed else project_state(
-        data_dir, project, operator, commit, synthetic_submission
-    )
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = WorkbenchServer(("127.0.0.1", port), Handler)
+    try:
+        if md_slurm_config is not None:
+            server.md_broker = SlurmBroker(data_dir, md_slurm_config)
+        store, approvals, receipts = (None, None, None) if managed else project_state(
+            data_dir, project, operator, commit, synthetic_submission, server.md_broker
+        )
+    except BaseException:
+        server.server_close()
+        raise
     server.access, server.audit, server.backups = access, audit, backups
     server.data_dir, server.commit = data_dir, commit
     server.slurm_receipts, server.approvals = receipts, approvals
@@ -635,13 +725,16 @@ def main():
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--a6-synthetic-slurm", action="store_true",
                         help="Enable human-confirmed short synthetic jobs on the V100 GPU partition")
+    parser.add_argument("--md-slurm-config", type=Path,
+                        help="Enable confirmed LAMMPS Slurm jobs using an operator-maintained JSON profile")
     parser.add_argument("--access-policy", type=Path)
     parser.add_argument("--audit-log", type=Path)
     parser.add_argument("--backup-root", type=Path)
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
                      args.max_upload_mib, args.workers, args.a6_synthetic_slurm,
-                     access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root) as server:
+                     access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root,
+                     md_slurm_config=args.md_slurm_config) as server:
         if server.access is not None:
             restrict_egress()
             server.audit.record(dict(time=datetime.now(timezone.utc).isoformat(),

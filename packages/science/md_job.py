@@ -34,7 +34,7 @@ def _int(value, name, maximum):
 
 def _config(config):
     if (not isinstance(config, dict) or not _REQUIRED <= config.keys()
-            or config.keys() - _REQUIRED - {"damping_ps", "structure_options"}):
+            or config.keys() - _REQUIRED - {"damping_ps", "structure_options", "restart_every"}):
         raise ValueError("Invalid MD configuration fields")
     integrator = config["integrator"]
     if integrator not in ("nve", "nvt"):
@@ -48,6 +48,8 @@ def _config(config):
     result = dict(config, boundary=list(boundary))
     for field in ("steps", "thermo_every", "dump_every", "seed"):
         result[field] = _int(config[field], field, 900_000_000 if field == "seed" else 2**31 - 1)
+    if "restart_every" in config:
+        result["restart_every"] = _int(config["restart_every"], "restart_every", 2**31 - 1)
     result["dt_ps"] = _number(config["dt_ps"], "dt_ps")
     result["initial_temperature_K"] = _number(config["initial_temperature_K"],
                                               "initial_temperature_K", allow_zero=integrator == "nve")
@@ -118,16 +120,16 @@ def _eam(force_field, type_count, potential):
     ]
 
 
-def _script(config, pair_commands, structure):
+def _script(config, pair_commands, structure, *, restarting=False):
     temperature = config["initial_temperature_K"]
-    commands = [
-        "log log.lammps",
-        "units metal",
-        "atom_style atomic",
-        f"boundary {' '.join(config['boundary'])}",
-        "read_data structure.data",
-        *pair_commands,
-    ]
+    commands = ["log log.lammps"]
+    if restarting:
+        commands.append("read_restart source.restart")
+    else:
+        commands.extend(("units metal", "atom_style atomic",
+                         f"boundary {' '.join(config['boundary'])}", "read_data structure.data"))
+    if not restarting or config["force_field"]["style"] == "eam/alloy":
+        commands.extend(pair_commands)
     if config["force_field"]["style"] == "eam/alloy":
         # EAM pair coefficients can set masses from the table. Reapply the
         # resolved structure masses, including explicit operator overrides.
@@ -138,7 +140,7 @@ def _script(config, pair_commands, structure):
         # A single atom has no thermal DOF after subtracting COM motion.
         commands.extend(("compute md_temperature all temp",
                          "compute_modify md_temperature extra/dof 0"))
-    if temperature:
+    if temperature and not restarting:
         settings = "mom no rot no dist gaussian temp md_temperature" if single else "mom yes rot no dist gaussian"
         commands.append(f"velocity all create {temperature} {config['seed']} {settings}")
     if config["integrator"] == "nvt":
@@ -156,14 +158,24 @@ def _script(config, pair_commands, structure):
     commands.extend([
         f"dump md_trajectory all custom {config['dump_every']} trajectory.lammpstrj id type x y z ix iy iz vx vy vz",
         "dump_modify md_trajectory sort id units yes format float %.17g",
-        f"run {config['steps']}",
-        "write_data final.data",
-        "write_restart final.restart",
     ])
+    if interval := config.get("restart_every"):
+        interval = min(interval, config["steps"])
+        commands.extend((
+            "thermo_modify flush yes",
+            f'run {config["steps"]} every {interval} "write_restart checkpoint.tmp" '
+            '"shell mv checkpoint.tmp checkpoint.$(step:%.0f)"',
+            "write_data final.data",
+            "write_restart checkpoint.tmp",
+            "shell mv checkpoint.tmp final.restart",
+        ))
+    else:
+        commands.extend((f"run {config['steps']}", "write_data final.data",
+                         "write_restart final.restart"))
     return ("\n".join(commands) + "\n").encode("ascii")
 
 
-def build_job(filename, source_bytes, config, *, potential=None, provenance=None):
+def build_job(filename, source_bytes, config, *, potential=None, provenance=None, restarting=False):
     """Return a ZIP with fixed commands, the supplied source, and resolved inputs."""
     config = _config(config)
     if provenance is not None and not isinstance(provenance, dict):
@@ -196,7 +208,7 @@ def build_job(filename, source_bytes, config, *, potential=None, provenance=None
         raise ValueError("MD metadata must be JSON serializable") from error
     buffer = BytesIO()
     with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
-        archive.writestr(files["input"], _script(config, pair_commands, structure))
+        archive.writestr(files["input"], _script(config, pair_commands, structure, restarting=restarting))
         archive.writestr(files["structure"], structure_data)
         archive.writestr("md-config.json", encoded)
         archive.writestr(files["source"], source_bytes)

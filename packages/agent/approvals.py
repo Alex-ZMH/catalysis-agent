@@ -1,4 +1,4 @@
-"""Persistent, project-scoped human approvals for synthetic scheduling."""
+"""Persistent, project-scoped human approvals for scheduling."""
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -20,7 +20,7 @@ class RestoredApprovalError(ValueError):
 
 
 class ApprovalStore:
-    def __init__(self, directory, project, operator, scheduler=None):
+    def __init__(self, directory, project, operator, scheduler=None, *, md_scheduler=None):
         for name in (project, operator):
             if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}", name):
                 raise ValueError("Invalid project or operator ID")
@@ -37,10 +37,11 @@ class ApprovalStore:
                     or not re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("archive_sha256")))):
                 raise ValueError("Invalid project recovery marker")
             self.recovery = {"project": project, "archive_sha256": evidence["archive_sha256"]}
-            self.scheduler = None
+            self.scheduler = self.md_scheduler = None
             return
         base.mkdir(parents=True, exist_ok=True)
         self.scheduler = scheduler
+        self.md_scheduler = md_scheduler
         with self._write() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS approvals (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -104,12 +105,17 @@ class ApprovalStore:
                    (_json_bytes(record), record["id"]))
 
     def _require_scheduler(self, spec):
-        if (spec["mode"], spec["workflow"], spec["origin"]) != (
+        if (spec["mode"], spec["workflow"]) == ("slurm-md", "md-lammps"):
+            scheduler = self.md_scheduler
+        elif (spec["mode"], spec["workflow"], spec["origin"]) == (
             "slurm-synthetic", "synthetic-v100", "synthetic"
         ):
-            raise ValueError("Only synthetic-v100 plans from synthetic data can use Slurm")
-        if self.scheduler is None:
+            scheduler = self.scheduler
+        else:
+            raise ValueError("Unsupported Slurm approval plan")
+        if scheduler is None:
             raise ValueError("No scheduler is configured")
+        return scheduler
 
     def confirm(self, plan_id, digest):
         previous = self.get(plan_id)
@@ -121,11 +127,11 @@ class ApprovalStore:
         expected = previous["state"], previous["attempts"]
         state, message = "confirmed", "Confirmed plan"
         if previous["spec"]["mode"] != "plan-only":
-            self._require_scheduler(previous["spec"])
+            scheduler = self._require_scheduler(previous["spec"])
             # Preparation must be safe to repeat and must never submit a job.
             # A process dying here leaves the prior version eligible for retry.
             try:
-                self.scheduler.prepare(previous)
+                scheduler.prepare(previous)
             except Exception as error:
                 state, message = "retryable", f"Preparation failed: {error}"
             else:
@@ -146,7 +152,7 @@ class ApprovalStore:
             return plan
         attempt = plan["attempts"]
         try:
-            job_id = self.scheduler.submit(plan)
+            job_id = scheduler.submit(plan)
             if not isinstance(job_id, str) or not _JOB_ID.fullmatch(job_id):
                 raise ValueError("Scheduler returned no valid job ID")
         except Exception as error:
@@ -159,10 +165,10 @@ class ApprovalStore:
         if plan["state"] not in {"submitting", "unknown"}:
             return plan
         self._require_writable()
-        self._require_scheduler(plan["spec"])
+        scheduler = self._require_scheduler(plan["spec"])
         attempt = plan["attempts"]
         try:
-            job_id = self.scheduler.lookup(plan)
+            job_id = scheduler.lookup(plan)
             if job_id is not None and (not isinstance(job_id, str) or not _JOB_ID.fullmatch(job_id)):
                 raise ValueError("Scheduler lookup returned an invalid job ID")
         except Exception as error:

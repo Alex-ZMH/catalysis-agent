@@ -69,8 +69,9 @@ def _read_job_bundle(path):
     return name, raw, meta["config"], potential, meta.get("provenance")
 
 
-def _stage(directory, name, raw, config, potential, provenance):
-    bundle = md_job.build_job(name, raw, config, potential=potential, provenance=provenance)
+def _stage(directory, name, raw, config, potential, provenance, *, restarting=False):
+    bundle = md_job.build_job(name, raw, config, potential=potential, provenance=provenance,
+                              restarting=restarting)
     with ZipFile(BytesIO(bundle)) as archive:
         names = archive.namelist()
         expected = {*_INPUTS, "source/" + name}
@@ -169,7 +170,8 @@ def _thermo(log, destination):
     return rows
 
 
-def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=None):
+def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=None,
+           checkpoint=None, restart=None, engine_args=()):
     """Run once in a fresh directory and return the persisted run.json record."""
     if job_bundle is None:
         if structure is None or config is None:
@@ -180,6 +182,12 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
         raise ValueError("--job-bundle cannot be combined with --structure, --config or --potential")
     else:
         job_bundle = Path(job_bundle)
+    if (checkpoint is None) != (restart is None) or (checkpoint is not None and job_bundle is None):
+        raise ValueError("Restart requires a job bundle, checkpoint and provenance")
+    if restart is not None:
+        if not isinstance(restart, dict):
+            raise ValueError("Invalid restart provenance")
+        md_job._int(restart.get("steps"), "restart steps", 2**31 - 1)
     engine, directory = Path(engine), Path(output_dir)
     directory.mkdir(mode=0o700)
     directory = directory.resolve()
@@ -202,7 +210,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
                    "config": config.name if config is not None else "md-config.json",
                    "potential": potential.name if potential is not None else None,
                    "job_bundle": job_bundle.name if job_bundle is not None else None},
-        "provenance": None,
+        "provenance": None, "restart": restart,
         "engine": {"requested": str(engine), "path": None, "version": None, "version_argv": None,
                    "argv": None, "version_returncode": None, "returncode": None},
         "parameters": None, "units": None, "files": [], "thermo_rows": None, "error": None,
@@ -214,7 +222,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
         executable = _engine(engine)
         engine_info = record["engine"]
         engine_info.update(path=executable, version_argv=[executable, "-help"],
-                           argv=[executable, "-in", "in.md", "-log", "log.lammps"])
+                           argv=[executable, *engine_args, "-in", "in.md", "-log", "log.lammps"])
         if not caught:
             if job_bundle is None:
                 name = structure.name
@@ -225,7 +233,12 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
             else:
                 name, raw, settings, potential_bytes, provenance = _read_job_bundle(job_bundle)
                 record["inputs"]["structure"] = name
-            bundle = _stage(directory, name, raw, settings, potential_bytes, provenance)
+            if checkpoint is not None:
+                settings = dict(settings, steps=restart["steps"])
+                with _regular_input(Path(checkpoint)).open("rb") as source, (directory / "source.restart").open("xb") as target:
+                    shutil.copyfileobj(source, target)
+            bundle = _stage(directory, name, raw, settings, potential_bytes, provenance,
+                            restarting=checkpoint is not None)
             record["provenance"] = bundle.get("provenance")
             if job_bundle is not None and potential_bytes is not None:
                 metadata = record["provenance"] or {}
@@ -289,6 +302,9 @@ def main(argv=None):
     parser.add_argument("--engine", required=True, type=Path,
                         help="Absolute path to an admin-trusted LAMMPS executable")
     parser.add_argument("--output-dir", required=True, type=Path, help="New run directory under an existing parent")
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--restart-provenance", type=json.loads)
+    parser.add_argument("--engine-arg", action="append", default=[])
     args = parser.parse_args(argv)
     if args.job_bundle is not None and (args.config is not None or args.potential is not None):
         parser.error("--job-bundle cannot be combined with --config or --potential")
@@ -296,8 +312,9 @@ def main(argv=None):
         parser.error("--structure requires --config")
     try:
         record = run_md(args.structure, args.config, args.engine, args.output_dir,
-                        potential=args.potential, job_bundle=args.job_bundle)
-    except OSError as error:
+                        potential=args.potential, job_bundle=args.job_bundle, checkpoint=args.checkpoint,
+                        restart=args.restart_provenance, engine_args=args.engine_arg)
+    except (OSError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1
     print(json.dumps(record, ensure_ascii=False, allow_nan=False))

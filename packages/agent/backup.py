@@ -153,7 +153,7 @@ def _document(path):
     return value
 
 
-def _validate_approvals(database, project, sources):
+def _validate_approvals(database, project, sources, files):
     uri = database.as_uri() + "?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri, uri=True)) as db:
         _check_database(db)
@@ -161,17 +161,27 @@ def _validate_approvals(database, project, sources):
             try:
                 plan = json.loads(content, object_pairs_hook=_unique_object)
                 spec = plan["spec"]
-                source = sources[spec["run_id"]]
                 identity = hashlib.sha256(json.dumps(
                     [project, spec], ensure_ascii=False, allow_nan=False,
                     sort_keys=True, separators=(",", ":")
                 ).encode("utf-8")).hexdigest()
-                required = {"run_id", "source_sha256", "origin"}
-                if (plan_id != "plan-" + identity or plan["id"] != plan_id
-                        or plan["digest"] != identity or not required <= spec.keys()
-                        or any(spec[field] != value for field, value in source.items()
-                               if field in spec)):
-                    raise ValueError("Approval identity or source differs from the published run")
+                if plan_id != "plan-" + identity or plan["id"] != plan_id or plan["digest"] != identity:
+                    raise ValueError("Approval identity differs")
+                if (spec["mode"], spec["workflow"]) == ("slurm-md", "md-lammps"):
+                    provenance = spec["provenance"]
+                    request = spec["request_id"]
+                    path = f"approvals/md-slurm/requests/{request}/bundle.zip"
+                    if provenance["project_id"] != project or path not in files:
+                        raise ValueError("MD approval source differs from the project")
+                    if "run_id" in provenance and provenance["run_id"] not in sources:
+                        raise ValueError("MD approval source run is absent")
+                else:
+                    source = sources[spec["run_id"]]
+                    required = {"run_id", "source_sha256", "origin"}
+                    if not required <= spec.keys() or any(
+                        spec[field] != value for field, value in source.items() if field in spec
+                    ):
+                        raise ValueError("Approval source differs from the published run")
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"Invalid approval source linkage: {plan_id}") from error
 
@@ -229,7 +239,7 @@ def _validate_project(root, project, directories, hashes, size, database):
         raise ValueError("Unexpected file in runs directory")
     if database is not None:
         _check_database_header(database)
-        _validate_approvals(database, project, sources)
+        _validate_approvals(database, project, sources, hashes)
 
 
 def _sync_directory(path):

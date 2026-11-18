@@ -43,6 +43,42 @@ python -m packages.md_run --job-bundle "$JOB_BUNDLE" \
   --engine "$LAMMPS_EXECUTABLE" --output-dir "$RUN_DIR"
 ```
 
-独立进入时，也可使用 `--structure` 和 `--config` 直接生成并运行。EAM 势文件随 `--potential` 提供。执行端依据结构与配置生成输入脚本。 `run.json` 记录输入、参数、版本、代码提交、Slurm 作业号、结束状态和产物。 `log.lammps` 为原生输出， `thermo.jsonl` 提取其热力学记录。 `trajectory.lammpstrj` 可从工作台 LAMMPS 轨迹入口读取。 `final.data` 和 `final.restart` 保存在本次运行。可使用场地的 Slurm 命令停止作业，工作台运行和恢复按钮列在总任务清单。
+独立进入时，也可使用 `--structure` 和 `--config` 直接生成并运行。EAM 势文件随 `--potential` 提供。执行端依据结构与配置生成输入脚本。 `run.json` 记录输入、参数、版本、代码提交、Slurm 作业号、结束状态和产物。 `log.lammps` 为原生输出， `thermo.jsonl` 提取其热力学记录。 `trajectory.lammpstrj` 可从工作台 LAMMPS 轨迹入口读取。 `final.data` 和 `final.restart` 保存在本次运行。已由工作台提交的作业可在工作台取消与恢复。
 
 V100 首次链路演练对应 Slurm 作业 `1033`，使用 LAMMPS 22 Jul 2025 Update 2。40 步合成 NVE 运行生成 5 帧原生轨迹和 5 条热力学记录。工作台从轨迹文件读回步号 0、10、20、30、40。批次目录为 `/home/v100/projects/catalysis-agent/jobs/md/20261118-lammps-run-01/`。
+
+## 工作台提交与恢复
+
+在 V100 启动工作台时传入 `--md-slurm-config /path/to/site.json`。受管模式仍使用项目登录、角色与审计策略。项目查看者可读取状态和产物。分析员和管理员可创建计划、人工确认、核对回执、取消作业和创建恢复计划。HTTP 进程保留原有出站限制。单独启动的本机调度进程仅接收固定的 Slurm 操作和项目计划标识。
+
+场地配置样例使用已安装的 OpenMP 构建。CPU 数量和时限由每次计划指定，受场地上限约束。
+
+```json
+{
+  "engine": "/absolute/path/to/lmp",
+  "library_path": ["/absolute/path/to/lib"],
+  "engine_args": ["-sf", "omp"],
+  "cpu_partition": "cpu",
+  "node": "v100",
+  "memory": "4G",
+  "max_cpus": 16,
+  "max_minutes": 1440
+}
+```
+
+`engine` 必填。其余字段可省略。内存省略时采用分区默认值。需提供 GPU 运行时，可配置 `gpu_engine`、`gpu_engine_args` 和 `gpu_partition`，且 GPU 资源申请限一张 V100。命令行参数、分区和执行环境均由场地配置提供。
+
+创建计划时填入 `restart_every`，指定每段保存检查点的步数。先在 A6 核对资源与计算参数并人工确认。状态页显示 Slurm 状态、最近热力学步号、进度、已保存的检查点和输出文件。每个检查点由 LAMMPS 写完后原子发布。同一计算会保留各已发布检查点，磁盘需求随保存频率与体系大小增加。取消可能发生在第一个检查点生成之前。
+
+调度回执丢失时使用 A6「查询回执」。核对只寻找原作业。V100 的 Slurm 未启用历史记账，控制器记录过期后可使用先前保存的回执。尚无法查明的提交保持待核对状态。要继续已经终止的计算，在工作台选择原作业的检查点并指定追加步数，创建新的 A6 计划，然后另行人工确认。恢复计划记录原计划、Slurm 作业号、检查点及其步号。`read_restart` 续接原步号与速度，工作台在新目录保存本次输出。请使用与生成检查点时兼容的 LAMMPS 构建。
+
+API 采用普通项目作用域。下表所示为无项目前缀的路由。
+
+| 请求 | 内容 |
+| --- | --- |
+| `POST /api/md-job/plan` | 与作业包相同的 multipart 来源字段，`options` 为 `{config, cpus, gpus, minutes, request_id}`。同一个 UUID 对应同一次创建请求 |
+| `POST /api/plans/{id}/confirm` | `{digest, confirmed: true}` |
+| `POST /api/plans/{id}/reconcile` | `{}`，只查询回执 |
+| `GET /api/plans/{id}/status` | Slurm 状态、运行器状态、进度、检查点及产物下载链接 |
+| `POST /api/plans/{id}/cancel` | `{confirmed: true}` |
+| `POST /api/plans/{id}/restart` | `{checkpoint, steps, cpus, gpus, minutes}`，返回待确认的恢复计划 |
