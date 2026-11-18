@@ -1,4 +1,4 @@
-"""Local workbench HTTP entry point. The service has no outbound or scheduler client."""
+"""Loopback workbench with an explicitly enabled synthetic Slurm submission profile."""
 import argparse
 from email import policy
 from email.parser import BytesParser
@@ -16,6 +16,8 @@ from urllib.parse import quote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
 from jsonschema import ValidationError
+from packages.agent.approvals import ApprovalStore
+from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import Workspace, json_bytes
 from scripts.frontend_baseline import git as baseline_git, verify as verify_baseline
 
@@ -67,6 +69,33 @@ def form_fields(headers, data):
     except ValueError as exc:
         raise ValueError("分析参数必须是合法的 JSON 对象。") from exc
     return result
+
+
+PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})(?:/(confirm|reconcile))?")
+PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
+              "equipment-simulation": "equipment"}
+
+
+def plan_spec(store, body, synthetic_submission):
+    if set(body) != {"run_id", "workflow", "cpus", "gpus", "minutes"}:
+        raise ValueError("请提供来源运行、工作流、CPU 数量、GPU 数量和时限。")
+    if not all(isinstance(body[k], str) for k in ("workflow", "run_id")):
+        raise ValueError("无效的工作流或运行标识。")
+    workflow = body["workflow"]
+    source = store.plan_source(body["run_id"])
+    synthetic = workflow == "synthetic-v100"
+    if synthetic:
+        if not synthetic_submission or source["origin"] != "synthetic":
+            raise ValueError("短时 V100 验收需要合成来源和已启用的合成作业配置。")
+    elif workflow not in PLAN_KINDS or PLAN_KINDS[workflow] != source["run_kind"]:
+        raise ValueError("工作流与来源运行类型不匹配。")
+    limits = {"cpus": (1, 2 if synthetic else 256), "gpus": (1, 1) if synthetic else (0, 8),
+              "minutes": (1, 2 if synthetic else 10080)}
+    for field, (low, high) in limits.items():
+        if type(body[field]) is not int or not low <= body[field] <= high:
+            raise ValueError(f"{field} 必须是 {low} 到 {high} 之间的整数。")
+    return {**source, **body, "mode": "slurm-synthetic" if synthetic else "plan-only",
+            "policy_id": "a6-synthetic-v100-v1" if synthetic else "intranet-v1"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -134,6 +163,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, (ROOT / "docs" / guides[path]).read_bytes(), "text/plain; charset=utf-8")
             return
         store = self.server.workspace
+        if path == "/api/plans":
+            self._send(200, json_bytes({"plans": self.server.approvals.list(),
+                                        "synthetic_submission": self.server.synthetic_submission}))
+            return
+        plan = PLAN_PATH.fullmatch(path)
+        if plan and plan[2] is None:
+            self._send(200, json_bytes(self.server.approvals.get(plan[1])))
+            return
         if path == "/api/runs":
             self._send(200, json_bytes({"runs": store.recent()}))
             return
@@ -149,7 +186,47 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(200, json_bytes(store.detail(run)))
 
+    def _plan_action(self, path):
+        match = PLAN_PATH.fullmatch(path)
+        if path != "/api/plans" and (not match or not match[2]):
+            raise FileNotFoundError()
+        if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+            self._send(403, json_bytes({"error": "人工确认操作须从同源工作台发起。"}))
+            return
+        if self.headers.get_content_type() != "application/json":
+            self._send(415, json_bytes({"error": "计划请求需要 JSON。"}))
+            return
+        size = int(self.headers.get("Content-Length", "-1"))
+        if self.headers.get("Transfer-Encoding") or not 0 < size <= 8192:
+            self._send(413, json_bytes({"error": "计划请求须在 8 KiB 内。"}))
+            return
+        self.connection.settimeout(15)
+        data = self.rfile.read(size)
+        if len(data) != size:
+            raise ValueError("计划请求未接收完整。")
+        body = json.loads(data)
+        if not isinstance(body, dict):
+            raise ValueError("计划请求需要 JSON 对象。")
+        approvals = self.server.approvals
+        if path == "/api/plans":
+            record = approvals.create(plan_spec(self.server.workspace, body,
+                                                self.server.synthetic_submission))
+        elif match[2] == "confirm":
+            if set(body) != {"digest", "confirmed"} or body["confirmed"] is not True:
+                raise ValueError("需要对当前计划摘要进行人工确认。")
+            if not isinstance(body["digest"], str) or not re.fullmatch("[0-9a-f]{64}", body["digest"]):
+                raise ValueError("计划摘要格式无效。")
+            record = approvals.confirm(match[1], body["digest"])
+        else:
+            if body:
+                raise ValueError("查询回执不接受提交参数。")
+            record = approvals.reconcile(match[1])
+        self._send(200, json_bytes(record))
+
     def _post(self, path):
+        if path == "/api/plans" or path.startswith("/api/plans/"):
+            self._plan_action(path)
+            return
         if path not in {"/api/runs", "/api/cell"}:
             raise FileNotFoundError()
         size = int(self.headers.get("Content-Length", "-1"))
@@ -185,13 +262,17 @@ class Handler(BaseHTTPRequestHandler):
         self._request(True)
 
 
-def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2):
+def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2, synthetic_submission=False):
     if min(max_upload_mib, workers) <= 0:
         raise ValueError("Limits must be positive")
     assets = static_files()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     store = Workspace(data_dir, project, operator, commit)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    approvals_dir = store.runs.parent / "approvals"
+    scheduler = SyntheticSlurm(approvals_dir / "slurm") if synthetic_submission else None
+    server.approvals = ApprovalStore(data_dir, project, operator, scheduler)
+    server.synthetic_submission = synthetic_submission
     server.workspace, server.assets = store, assets
     server.upload_limit = max_upload_mib * 1024 * 1024
     server.analysis_slots = threading.BoundedSemaphore(workers)
@@ -207,9 +288,11 @@ def main():
     parser.add_argument("--port", type=int, default=8771)
     parser.add_argument("--max-upload-mib", type=int, default=64)
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--a6-synthetic-slurm", action="store_true",
+                        help="Enable human-confirmed short synthetic jobs on the V100 GPU partition")
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
-                     args.max_upload_mib, args.workers) as server:
+                     args.max_upload_mib, args.workers, args.a6_synthetic_slurm) as server:
         print(f"http://127.0.0.1:{server.server_port}/#studio", flush=True)
         try:
             server.serve_forever()

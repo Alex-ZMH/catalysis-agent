@@ -112,3 +112,6 @@
   #studio .wb-header:has(#analysis-nav) { flex-wrap: wrap; gap: 6px 10px; }
   #studio .ca-grid:not(.ca-axes), #studio .ca-metrics { grid-template-columns: minmax(0, 1fr); }
 }
+
+#studio .ca-a6-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
+#studio #a6-events { margin-block: 8px; padding-inline-start: 24px; }

@@ -59,8 +59,8 @@
     return value;
   }
 
-  async function request(path, body, kind) {
-    const response = await fetch(path, body ? { method: "POST", body } : {});
+  async function request(path, body, kind, headers) {
+    const response = await fetch(path, body ? { method: "POST", body, headers } : {});
     const payload = kind === "md"
       ? response.text().then(source => JSON.parse(source, preserveIdentifier))
       : response.json();
@@ -387,6 +387,182 @@
     if (artifacts.childElementCount) target.append(artifacts);
   }
 
+
+  function mountPlans(find, panel, setStatus) {
+    const stateLabels = { pending: "待人工确认", confirmed: "已确认计划", retryable: "提交前检查失败，可重试",
+      submitting: "已受理确认，等待调度回执", unknown: "提交结果待核对", submitted: "已关联 Slurm 作业" };
+    const workflows = { adsorption: "vasp-relaxation", md: "md-simulation", equipment: "equipment-simulation" };
+    const form = find("#a6-form");
+    const { run_id: source, workflow, cpus, gpus, minutes } = form.elements;
+    const create = find("#a6-create");
+    const plans = find("#a6-plans");
+    const review = find("#a6-review");
+    const refresh = find("#a6-refresh");
+    const status = find("#a6-status");
+    const confirm = find("#a6-confirm");
+    const retry = find("#a6-retry");
+    const reconcile = find("#a6-reconcile");
+    let runs = new Map();
+    let records = new Map();
+    let syntheticSubmission = false;
+    let ready = false;
+    let busy = false;
+
+    function syncForm() {
+      const run = runs.get(source.value);
+      const standard = workflows[run?.kind];
+      const eligible = run?.origin === "synthetic" && syntheticSubmission;
+      const selected = workflow.value;
+      const options = [standard, eligible ? "synthetic-v100" : null].filter(Boolean);
+      workflow.replaceChildren(...options.map(value => new Option(value, value)));
+      workflow.value = options.includes(selected) ? selected : (options[0] ?? "");
+      workflow.disabled = busy || !options.length;
+      const synthetic = workflow.value === "synthetic-v100";
+      cpus.max = synthetic ? 2 : 256;
+      gpus.min = synthetic ? 1 : 0;
+      gpus.max = synthetic ? 1 : 8;
+      minutes.max = synthetic ? 2 : 10080;
+      if (synthetic) {
+        if (cpus.valueAsNumber > 2) cpus.value = 2;
+        gpus.value = 1;
+        if (minutes.valueAsNumber > 2) minutes.value = 2;
+      }
+      create.disabled = busy || !ready || !workflow.value;
+      find("#a6-preview").textContent = run
+        ? `${originLabel[run.origin] ?? run.origin} · ${synthetic ? "确认后将尝试提交 v100 合成作业" : "确认仅记录计划"}`
+        : "";
+    }
+
+    function renderPlan() {
+      const record = records.get(plans.value);
+      const state = record?.state;
+      review.hidden = !record;
+      refresh.disabled = busy;
+      plans.disabled = busy || !records.size;
+      confirm.hidden = state !== "pending";
+      retry.hidden = state !== "retryable";
+      reconcile.hidden = !["submitting", "unknown"].includes(state);
+      const schedulerUnavailable = record?.spec.mode === "slurm-synthetic" && !syntheticSubmission;
+      for (const button of [confirm, retry, reconcile]) button.disabled = busy || !ready || schedulerUnavailable;
+      if (!record) return;
+      const spec = record.spec;
+      find("#a6-spec").replaceChildren(metrics([
+        ["计划编号", record.id], ["计划摘要", record.digest], ["源运行", spec.run_id],
+        ["来源", originLabel[spec.origin] ?? spec.origin], ["源文件", spec.source_name ?? runs.get(spec.run_id)?.filename],
+        ["流程", spec.workflow],
+        ["CPU / GPU / 分钟", `${spec.cpus} / ${spec.gpus} / ${spec.minutes}`],
+      ]));
+      confirm.textContent = spec.mode === "slurm-synthetic" ? "确认并提交合成作业" : "确认计划";
+      const mode = spec.mode === "slurm-synthetic"
+        ? (syntheticSubmission && spec.origin === "synthetic" ? "人工确认后由 Slurm 调度合成 V100 作业" : "当前服务未启用此计划的合成作业提交")
+        : "仅记录计划";
+      for (const [key, value] of Object.entries({
+        "source-sha": spec.source_sha256, mode, state: stateLabels[state] ?? state,
+        attempts: record.attempts, "job-id": record.job_id ?? "—",
+      })) find(`#a6-${key}`).textContent = value;
+      find("#a6-events").replaceChildren(...(record.events ?? []).map(event => {
+        const row = element("li", `${event.time} · ${event.operator} · ${stateLabels[event.state] ?? event.state}`);
+        row.append(element("small", event.message));
+        return row;
+      }));
+    }
+
+    function renderPlans(selected) {
+      plans.replaceChildren(new Option("选择计划", ""), ...Array.from(records.values(), record =>
+        new Option(`${stateLabels[record.state] ?? record.state} · ${record.spec.workflow} · ${record.id}`, record.id)));
+      plans.value = records.has(selected) ? selected : "";
+    }
+
+    function updatePlans(data) {
+      syntheticSubmission = data.synthetic_submission === true;
+      records = new Map(data.plans.map(record => [record.id, record]));
+      renderPlans(plans.value);
+      ready = true;
+    }
+
+    async function perform(task, recover = false) {
+      if (busy) return;
+      busy = true;
+      syncForm();
+      renderPlan();
+      setStatus(status, "正在读取或更新计划…");
+      try {
+        await task();
+        setStatus(status, "");
+      } catch (error) {
+        ready = false;
+        if (recover) {
+          try {
+            updatePlans(await request("/api/plans"));
+          } catch {
+            // Keep actions disabled until the next successful refresh.
+          }
+        }
+        setStatus(status, error.message, true);
+      } finally {
+        busy = false;
+        syncForm();
+        renderPlan();
+      }
+    }
+
+    function refreshPlans() {
+      return perform(async () => {
+        const [{ runs: history }, data] = await Promise.all([request("/api/runs"), request("/api/plans")]);
+        const selected = source.value;
+        runs = new Map(history.filter(run => Object.hasOwn(workflows, run.kind) || (run.origin === "synthetic" && data.synthetic_submission === true)).map(run => [run.id, run]));
+        source.replaceChildren(new Option("选择已有运行", ""), ...Array.from(runs.values(), run =>
+          new Option(`${run.filename} · ${kindLabel[run.kind]} · ${originLabel[run.origin] ?? run.origin} · ${run.id}`, run.id)));
+        source.value = runs.has(selected) ? selected : "";
+        updatePlans(data);
+      });
+    }
+
+    async function postPlan(path, body) {
+      const record = await request(path, JSON.stringify(body), undefined, { "Content-Type": "application/json" });
+      records.set(record.id, record);
+      renderPlans(record.id);
+    }
+
+    source.addEventListener("change", () => {
+      workflow.value = "";
+      syncForm();
+    });
+    workflow.addEventListener("change", syncForm);
+    plans.addEventListener("change", renderPlan);
+    refresh.addEventListener("click", refreshPlans);
+    find("#analysis-refresh").addEventListener("click", refreshPlans);
+    panel.addEventListener("toggle", () => { if (panel.open) void refreshPlans(); });
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      if (create.disabled || !form.reportValidity()) return;
+      const body = {
+        run_id: source.value, workflow: workflow.value, cpus: cpus.valueAsNumber,
+        gpus: gpus.valueAsNumber, minutes: minutes.valueAsNumber,
+      };
+      const existing = Array.from(records.values()).find(record =>
+        Object.entries(body).every(([key, value]) => record.spec[key] === value));
+      if (existing) {
+        plans.value = existing.id;
+        renderPlan();
+        return;
+      }
+      void perform(() => postPlan("/api/plans", body), true);
+    });
+
+    for (const [button, endpoint] of [[confirm, "confirm"], [retry, "confirm"], [reconcile, "reconcile"]]) {
+      button.addEventListener("click", () => {
+        const record = records.get(plans.value);
+        if (!record || button.disabled || button.hidden) return;
+        const body = endpoint === "confirm" ? { digest: record.digest, confirmed: true } : {};
+        void perform(() => postPlan(`/api/plans/${encodeURIComponent(record.id)}/${endpoint}`, body), true);
+      });
+    }
+
+    if (panel.open) void refreshPlans();
+    return refreshPlans;
+  }
+
   function mount() {
     const content = document.querySelector("#studio .wb-content");
     if (!content || document.querySelector("#analysis-panel")) return;
@@ -504,6 +680,40 @@
         <p id="analysis-history-status" role="status"></p>
         <ul id="analysis-history-list"></ul>
       </section>
+      <section id="a6-panel" aria-labelledby="a6-title">
+        <div class="ca-heading"><h2 id="a6-title">重计算计划</h2><button id="a6-refresh" type="button">刷新计划和输入</button></div>
+        <form id="a6-form">
+          <label>已有运行<select id="a6-run" name="run_id" required><option value="">选择已有运行</option></select></label>
+          <label>工作流程<select id="a6-workflow" name="workflow" required disabled></select></label>
+          <div class="ca-grid ca-axes">
+            <label>CPU<input id="a6-cpus" name="cpus" type="number" min="1" max="256" step="1" value="1" required></label>
+            <label>GPU<input id="a6-gpus" name="gpus" type="number" min="0" max="8" step="1" value="0" required></label>
+            <label>分钟<input id="a6-minutes" name="minutes" type="number" min="1" max="10080" step="1" value="1" required></label>
+          </div>
+          <p id="a6-preview" class="ca-muted"></p>
+          <button id="a6-create" class="ca-primary" type="submit" disabled>创建计划</button>
+        </form>
+        <label>已创建的计划<select id="a6-plans" disabled><option value="">选择计划</option></select></label>
+        <p id="a6-status" role="status"></p>
+        <section id="a6-review" aria-label="计划核对" hidden>
+          <h3>核对计划</h3>
+          <div id="a6-spec"></div>
+          <dl class="ca-metrics">
+            <div><dt>源文件 SHA-256</dt><dd><code id="a6-source-sha"></code></dd></div>
+            <div><dt>执行方式</dt><dd id="a6-mode"></dd></div>
+            <div><dt>状态</dt><dd id="a6-state"></dd></div>
+            <div><dt>尝试次数</dt><dd id="a6-attempts"></dd></div>
+            <div><dt>作业号</dt><dd id="a6-job-id"></dd></div>
+          </dl>
+          <div class="ca-a6-actions">
+            <button id="a6-confirm" type="button" hidden>确认计划</button>
+            <button id="a6-retry" type="button" hidden>确认重试</button>
+            <button id="a6-reconcile" type="button" hidden>查询回执</button>
+          </div>
+          <h4>计划事件</h4>
+          <ol id="a6-events"></ol>
+        </section>
+      </section>
       <details id="analysis-cell">
         <summary>晶胞尺寸预检与构建</summary>
         <form id="cell-form">
@@ -532,6 +742,7 @@
     content.append(panel);
 
     const find = selector => panel.querySelector(selector);
+    const refreshPlans = mountPlans(find, panel, setStatus);
     const header = content.closest(".wb-main").querySelector(".wb-header");
     if (header) {
       const nav = element("button", "科学分析");
@@ -796,6 +1007,7 @@
           setStatus(status, "分析完成。");
         }
         void loadHistory();
+        void refreshPlans();
       } catch (error) {
         if (version === viewVersion) setStatus(status, `分析失败：${error.message}`, true);
       } finally {

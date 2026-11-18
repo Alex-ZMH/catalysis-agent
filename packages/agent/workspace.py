@@ -191,6 +191,20 @@ class Workspace:
             raise ValueError("原文件校验失败，请核对存储或恢复备份。")
         return raw
 
+    def plan_source(self, run_id):
+        """Read the identity of an existing input without loading large scientific arrays."""
+        manifest = self.manifest(run_id)
+        summary = self._read(run_id, "summary")
+        raw_id = self._read(run_id, "index")["raw"]
+        raw = next((r for r in manifest["artifacts"] if r["artifact_id"] == raw_id), None)
+        if (manifest["project_id"] != self.project or manifest["run_id"] != run_id
+                or summary["id"] != run_id or raw is None or raw["role"] != "source"
+                or raw["project_id"] != self.project or raw["origin"] != summary["origin"]):
+            raise ValueError("计划来源与项目运行清单不一致。")
+        return {"run_id": run_id, "run_kind": summary["kind"], "origin": raw["origin"],
+                "source_name": summary["filename"], "source_sha256": raw["sha256"],
+                "source_id": raw_id, "source_commit": manifest["code_commit"]}
+
     def download(self, run_id, artifact_id):
         manifest = self.manifest(run_id)
         record = next((a for a in manifest["artifacts"] if a["artifact_id"] == artifact_id), None)
