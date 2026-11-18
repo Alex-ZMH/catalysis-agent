@@ -108,10 +108,26 @@ class FileWorkbench(unittest.TestCase):
                             finally:
                                 connection.close()
                         self.assertEqual(get(raw["url"]), content)
-                        source, candidate = (next(a for a in view["artifacts"] if a["name"] == filename)
-                                             for filename in ("normalized.json", "result.json"))
-                        link_result(kind, view["result"], get(candidate["url"]),
-                                    json.loads(get(view["manifest_url"])), view["input"], get(source["url"]))
+                        artifacts = {artifact["name"]: artifact for artifact in view["artifacts"]}
+                        source, candidate, params = (artifacts[name] for name in
+                                                     ("normalized.json", "result.json", "parameters.json"))
+                        manifest = json.loads(get(view["manifest_url"]))
+                        records = {record["artifact_id"]: record for record in manifest["artifacts"]}
+                        source_bytes, result_bytes, params_bytes = (
+                            get(artifact["url"]) for artifact in (source, candidate, params))
+                        link_result(kind, view["result"], result_bytes, manifest, view["input"], source_bytes)
+                        self.assertEqual(json.loads(source_bytes), view["input"])
+                        self.assertEqual(json.loads(result_bytes), view["result"])
+                        self.assertIn(raw["id"], records[source["id"]]["parents"])
+                        self.assertEqual(manifest["parameters_artifact"], params["id"])
+                        self.assertCountEqual(records[candidate["id"]]["parents"], [source["id"], params["id"]])
+                        self.assertEqual(records[params["id"]]["sha256"], sha256(params_bytes).hexdigest())
+                        self.assertEqual(json.loads(params_bytes), dict(kind=kind, options=options, origin="synthetic"))
+                        if fixture is demo_xlsx:
+                            details = json.loads(get(artifacts["details.json"]["url"]))
+                            self.assertEqual(details["sheet"], "Kinetic data")
+                            self.assertEqual(details["header_row"], 2)
+                            self.assertEqual(details["rows"][-1]["row"], 18)
                 self.assertEqual(len(server.workspace.recent()), 3)
                 status, _ = post_file(server.server_port, "empty.csv", b"bad", dict(kind="kinetics", origin="synthetic"))
                 self.assertGreaterEqual(status, 400)

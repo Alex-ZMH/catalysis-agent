@@ -92,31 +92,72 @@ async function main() {
     await page.locator("#analysis-results").getByText(cases.vasp.filename,{exact:true}).first().waitFor();
     const cell = page.locator("#analysis-cell");
     if (!(await cell.evaluate(el => el.open))) await cell.locator("summary").click();
-    await page.setInputFiles("#cell-upload",path.join(directory,"POSCAR"));
+    const poscarPath = path.join(directory,"POSCAR");
+    const originalPoscar = fs.readFileSync(poscarPath);
+    await page.setInputFiles("#cell-upload",poscarPath);
     await page.selectOption("#cell-mode","construct");
-    await page.fill("#cell-form [name=vacuum_A]", "24");
     await page.fill("#cell-form [name=repeat_a]", "2");
     await page.fill("#cell-form [name=repeat_b]", "2");
-    async function cellPlan() {
-      const response = page.waitForResponse(r => r.url() === base + "/api/cell");
+    await page.fill("#cell-form [name=repeat_c]", "1");
+    // Chromium omits file contents from Playwright's multipart request data.
+    await page.evaluate(() => {
+      const fetch = window.fetch;
+      window.cellUploads = [];
+      window.fetch = (url, init) => {
+        if (url === "/api/cell") {
+          const file = init.body.get("file");
+          window.cellUploads.push(file.arrayBuffer().then(bytes => ({
+            name: file.name,
+            bytes: Array.from(new Uint8Array(bytes)),
+            options: JSON.parse(init.body.get("options")),
+          })));
+        }
+        return fetch(url, init);
+      };
+    });
+    async function cellPlan(vacuum) {
+      await page.fill("#cell-form [name=vacuum_A]", String(vacuum));
+      const response = page.waitForResponse(r => r.url() === base + "/api/cell" && r.request().method() === "POST");
       await page.click("#cell-submit");
-      return (await response).json();
+      const reply = await response;
+      const plan = await reply.json();
+      assert.equal(reply.status(), 200, plan.error);
+
+      const upload = await page.evaluate(() => window.cellUploads.shift());
+      assert.equal(upload.name, "POSCAR");
+      assert.deepEqual(Buffer.from(upload.bytes), originalPoscar);
+      assert.deepEqual(upload.options.repeats, [2,2,1]);
+      assert.equal(upload.options.vacuum_A, vacuum);
+      assert.deepEqual(plan.repeats, [2,2,1]);
+      assert.equal(plan.vacuum_A, vacuum);
+      return plan;
     }
-    const plan = await cellPlan();
+    const plan = await cellPlan(42);
     assert.equal(plan.within_limit,true,plan.error);
-    assert.deepEqual(plan.lengths_A,{a:36,b:32,c:32});
+    assert.deepEqual(plan.lengths_A,{a:36,b:32,c:50});
+    assert.equal(plan.actual_vacuum_A,42);
+    assert.equal(plan.atom_count,8);
     assert.equal(plan.atom_mapping.length,8);
     const dl = page.waitForEvent("download");
     await page.locator("#cell-results a[download]").click();
-    assert.equal(fs.readFileSync(await (await dl).path(),"utf8"),plan.poscar);
-    await page.fill("#cell-form [name=vacuum_A]", "43");
-    const over = await cellPlan();
+    const downloadedPoscar = fs.readFileSync(await (await dl).path(),"utf8");
+    assert.equal(downloadedPoscar,plan.poscar);
+    const lines = downloadedPoscar.trimEnd().split("\n");
+    assert.equal(Number(lines[1]),1);
+    assert.deepEqual(lines.slice(2,5).map(line => line.trim().split(/\s+/).map(Number)),[[36,0,0],[0,32,0],[0,0,50]]);
+    assert.deepEqual(lines.slice(5,9),["Si","8","Selective dynamics","Direct"]);
+    const atoms = lines.slice(9);
+    assert.equal(atoms.length,8);
+    const normalPositions = atoms.map(line => Number(line.trim().split(/\s+/)[2]) * 50);
+    assert.ok(Math.abs(50 - (Math.max(...normalPositions) - Math.min(...normalPositions)) - 42) < 1e-9);
+    const over = await cellPlan(43);
     assert.equal(over.within_limit,false);
     assert.deepEqual(over.exceeded_axes,["c"]);
     assert.equal(over.lengths_A.c,51);
     assert.equal(over.poscar,undefined);
     await page.locator("#cell-status").getByText(/超限/).waitFor();
     assert.equal(await page.locator("#cell-results a[download]").count(),0);
+    assert.equal(await page.locator("#cell-form").getAttribute("data-poscar-url"),null);
     assert.deepEqual(errors,[]);
     assert.deepEqual(external,[]);
     console.log(JSON.stringify({runs, cell:{accepted:plan.lengths_A,rejected:over.lengths_A},external,errors}));
