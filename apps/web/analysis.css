@@ -136,3 +136,16 @@
 #studio .ca-md-queue label { max-width: 42rem; }
 #studio .ca-md-progress { border-inline-start: 2px solid var(--wb-accent); padding-inline-start: 10px; font-variant-numeric: tabular-nums; }
 #studio #md-slurm-cancel:not(:disabled) { color: #ffc497; }
+
+#studio .ca-transport-columns { gap: 0 16px; }
+#studio .ca-transport-coefficient {
+  display: grid;
+  gap: 4px;
+  margin-block: 10px;
+  padding: 10px 14px;
+  border-inline-start: 2px solid var(--wb-accent);
+  background: var(--wb-panel);
+}
+#studio .ca-transport-coefficient strong { font-size: 21px; font-variant-numeric: tabular-nums; }
+#studio .ca-transport-result .ca-md-charts { margin-top: 12px; }
+#studio .ca-transport-notes { padding-inline-start: 20px; }

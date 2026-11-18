@@ -1,7 +1,19 @@
 (() => {
   "use strict";
 
-  const kindLabel = { md_thermo: "LAMMPS 热力学曲线", md_msd: "原子组 MSD 与扩散", adsorption: "VASP 吸附能", kinetics: "动力学拟合", md: "LAMMPS 轨迹", equipment: "VTU 场与线剖面" };
+  const kindLabel = { md_transport: "MD 热、质与动量传递", md_thermo: "LAMMPS 热力学曲线", md_msd: "原子组 MSD 与扩散", adsorption: "VASP 吸附能", kinetics: "动力学拟合", md: "LAMMPS 轨迹", equipment: "VTU 场与线剖面" };
+  const transportModes = {
+    conductivity: { name: "热传递 · 热导率", field: "温度", flux: "热通量", coefficient: "热导率" },
+    diffusivity: { name: "质量传递 · 扩散系数", field: "浓度", flux: "质量通量", coefficient: "扩散系数" },
+    viscosity: { name: "动量传递 · 动力黏度", field: "流向速度", flux: "剪切分量", coefficient: "动力黏度" },
+  };
+  const transportUnitExamples = {
+    position: ["m", "nm", "angstrom"],
+    time: ["s", "ns", "ps", "fs", "step"],
+    conductivity: { field: ["K"], flux: ["W/m^2", "eV/(angstrom^2*ps)"] },
+    diffusivity: { field: ["kg/m^3", "mol/m^3", "1/m^3"], flux: ["kg/(m^2*s)", "mol/(m^2*s)", "1/(m^2*s)"] },
+    viscosity: { field: ["m/s", "angstrom/ps"], flux: ["Pa", "bar", "atm"] },
+  };
   const rawKind = kind => kind === "md" || kind === "equipment";
   const originLabel = { synthetic: "合成数据", research: "研究数据" };
   const modelLabel = { arrhenius_known_k: "Arrhenius（已测速率常数）", initial_rate_power_law: "初始速率幂律" };
@@ -307,6 +319,98 @@ function renderMdAnalysis(run, target) {
     target.append(section);
   }
 
+  function renderTransport(run, target) {
+    const result = run.result;
+    if (!result) return;
+    const mode = transportModes[result.mode];
+    if (!mode) return;
+    const section = element("section", null, "ca-transport-result");
+    section.id = "analysis-md_transport-result";
+    section.append(element("h4", mode.name));
+    const source = result.source ?? {};
+    const job = run.details?.source_job_id ?? source.source_job_id;
+    if (job != null) section.append(element("p", "来源作业号（手动标注，未经核验） · " + job, "ca-muted"));
+    const unit = result.units ?? {};
+    const quantity = (value, units) => Number.isFinite(value)
+      ? [formatNumber(value), units].filter(Boolean).join(" ") : "未报告";
+
+    const coefficient = element("div", null, "ca-transport-coefficient");
+    coefficient.append(element("span", mode.coefficient, "ca-muted"),
+      element("strong", quantity(result.coefficient, result.coefficient_unit)));
+    if (result.formula) coefficient.append(element("small", result.formula));
+    section.append(coefficient, metrics([
+      ["场量梯度", quantity(result.gradient, result.gradient_unit ?? unit.gradient)],
+      ["平均" + mode.flux, quantity(result.mean_flux, unit.flux)],
+      ["输入行数", source.rows?.length],
+      ["入选样本数", result.selection?.selected_count],
+      ["输出位置数", result.profile?.length],
+    ]));
+
+    const driving = result.driving ?? run.details?.parameters?.driving;
+    const drivingLabels = { gradient_imposed: "施加梯度", flux_imposed: "施加通量" };
+    if (Object.hasOwn(drivingLabels, driving)) {
+      section.append(element("p", "驱动条件 · " + drivingLabels[driving], "ca-muted"));
+    }
+    const stress = result.selection?.stress_convention ?? result.stress_convention
+      ?? run.details?.parameters?.stress_convention;
+    if (stress) {
+      const label = { momentum_flux: "动量通量 P（负号）", cauchy_stress: "柯西应力 τ（正号）" };
+      section.append(element("p", "剪切分量约定 · " + (label[stress] ?? stress), "ca-muted"));
+    }
+    const entries = [
+      ["位置", "position"], [mode.field, "field"], [mode.flux, "flux"], ["时间", "time"],
+    ].filter(([, key]) => source.columns?.[key]);
+    if (entries.length) {
+      section.append(metrics(entries.map(([label, key]) => [
+        label + "输入列", [source.columns[key], source.units?.[key]].filter(Boolean).join(" · "),
+      ])));
+    }
+    if (result.selection) {
+      const range = axis => {
+        const min = result.selection[axis + "_min"];
+        const max = result.selection[axis + "_max"];
+        return min == null && max == null ? "全部范围"
+          : (min ?? "无下限") + " — " + (max ?? "无上限") + " " + (source.units?.[axis] ?? "");
+      };
+      section.append(metrics([
+        ["位置窗口", range("position")],
+        ...(source.columns?.time ? [["时间窗口", range("time")]] : []),
+        ["空间分箱宽度", result.selection.bin_width == null ? "原始位置"
+          : quantity(result.selection.bin_width, source.units?.position)],
+      ]));
+    }
+    if (Array.isArray(result.assumptions) && result.assumptions.length) {
+      const notes = element("ul", null, "ca-transport-notes");
+      for (const note of result.assumptions) notes.append(element("li", note));
+      section.append(notes);
+    }
+
+    const rows = result.profile ?? [];
+    if (rows.length) {
+      const label = (name, key) => unit[key] ? name + "（" + unit[key] + "）" : name;
+      const charts = element("div", null, "ca-md-charts");
+      const stride = Math.max(1, Math.ceil(rows.length / 1200));
+      const plotted = rows.filter((_, index) => index % stride === 0 || index === rows.length - 1);
+      for (const [key, name] of [["field", mode.field], ["flux", mode.flux]]) {
+        const series = [{ label: name, points: plotted.map(row => [row.position, row[key]]) }];
+        if (key === "field" && Number.isFinite(result.gradient) && Number.isFinite(result.intercept)) {
+          series.push({ label: "线性拟合", dashed: true,
+            points: [plotted[0].position, plotted.at(-1).position].map(position =>
+              [position, result.gradient * position + result.intercept]) });
+        }
+        charts.append(lineChart(name + "剖面", series, label("位置", "position"), label(name, key)));
+      }
+      section.append(charts);
+      if (stride > 1) section.append(element("p", "图中抽取部分位置，完整数值见下表。", "ca-muted"));
+      section.append(pager("analysis-transport-table", "剖面数据", rows.length, 40, (body, start, end) => {
+        body.append(dataTable("位置剖面", [label("位置", "position"), label(mode.field, "field"),
+          label(mode.flux, "flux"), "样本数"], rows.slice(start, end).map(row =>
+          [row.position, row.field, row.flux, row.count].map(formatNumber))));
+      }).container);
+    }
+    target.append(section);
+  }
+
   function renderMD(run, target) {
     const dump = run.result?.dump;
     if (!dump) return;
@@ -508,6 +612,7 @@ function renderMdAnalysis(run, target) {
       renderDftHandoff(run, target);
     }
     if (run.kind === "md_thermo" || run.kind === "md_msd") renderMdAnalysis(run, target);
+    if (run.kind === "md_transport") renderTransport(run, target);
     if (run.kind === "kinetics") {
       const summary = [
         ["模型", modelLabel[result.model] ?? result.model],
@@ -819,7 +924,7 @@ function renderMdAnalysis(run, target) {
         <div class="ca-grid">
           <label>分析类型<select id="analysis-kind" name="kind">
             <option value="adsorption">VASP 吸附能</option><option value="kinetics">动力学拟合</option>
-            <option value="md_thermo">LAMMPS 热力学曲线</option><option value="md_msd">原子组 MSD 与扩散</option><option value="md">LAMMPS 轨迹</option><option value="equipment">VTU 场与线剖面</option>
+            <option value="md_transport">MD 热、质与动量传递</option><option value="md_thermo">LAMMPS 热力学曲线</option><option value="md_msd">原子组 MSD 与扩散</option><option value="md">LAMMPS 轨迹</option><option value="equipment">VTU 场与线剖面</option>
           </select></label>
           <label>数据来源<select id="analysis-origin" name="origin">
             <option value="synthetic" selected>合成数据</option><option value="research">研究数据</option>
@@ -827,6 +932,50 @@ function renderMdAnalysis(run, target) {
         </div>
         <label>上传文件<input id="analysis-upload" name="file" type="file" required></label>
         <p id="analysis-file-hint" class="ca-muted"></p>
+        <fieldset id="analysis-transport" hidden disabled>
+          <legend>输运数据与坐标</legend>
+          <div class="ca-grid">
+            <label>传递模式<select name="transport_mode">
+              <option value="conductivity">热传递 · 热导率</option>
+              <option value="diffusivity">质量传递 · 扩散系数</option>
+              <option value="viscosity">动量传递 · 动力黏度</option>
+            </select></label>
+            <label>来源作业号（手动标注，可选）<input name="transport_source_job_id" maxlength="128"></label>
+            <label>驱动条件<select name="transport_driving">
+              <option value="unspecified">未指定</option>
+              <option value="gradient_imposed">施加梯度</option>
+              <option value="flux_imposed">施加通量</option>
+            </select></label>
+            <label id="analysis-transport-sheet" hidden>XLSX 工作表（可选）<input name="transport_sheet" disabled placeholder="留空读取默认工作表"></label>
+          </div>
+          <p id="analysis-transport-hint" class="ca-muted"></p>
+          <div class="ca-grid ca-transport-columns">
+            <label>位置列<input name="transport_position_column" required></label>
+            <label>位置单位<input name="transport_position_unit" list="analysis-transport-units-position" required></label>
+            <label><span id="analysis-transport-field-label">场量列</span><input name="transport_field_column" required></label>
+            <label><span id="analysis-transport-field-unit-label">场量单位</span><input name="transport_field_unit" list="analysis-transport-units-field" required></label>
+            <label><span id="analysis-transport-flux-label">通量列</span><input name="transport_flux_column" required></label>
+            <label><span id="analysis-transport-flux-unit-label">通量单位</span><input name="transport_flux_unit" list="analysis-transport-units-flux" required></label>
+            <label>时间列（可选）<input name="transport_time_column"></label>
+            <label>时间单位<input name="transport_time_unit" list="analysis-transport-units-time"></label>
+          </div>
+          ${["position", "field", "flux", "time"].map(key => `<datalist id="analysis-transport-units-${key}"></datalist>`).join("")}
+          <label id="analysis-transport-stress" hidden>剪切分量约定<select name="transport_stress_convention" disabled>
+            <option value="momentum_flux">动量通量 P · η = −P / 速度梯度</option>
+            <option value="cauchy_stress">柯西应力 τ · η = +τ / 速度梯度</option>
+          </select></label>
+          <fieldset>
+            <legend>空间与时间窗口（可选，含端点）</legend>
+            <div class="ca-grid ca-transport-columns">
+              <label>位置下限<input name="transport_position_min" type="number" step="any"></label>
+              <label>位置上限<input name="transport_position_max" type="number" step="any"></label>
+              <label>时间下限<input name="transport_time_min" type="number" step="any"></label>
+              <label>时间上限<input name="transport_time_max" type="number" step="any"></label>
+              <label>空间分箱宽度<input name="transport_bin_width" type="number" step="any" min="0"></label>
+            </div>
+            <p class="ca-muted">窗口和分箱使用上方输入单位。留空则保留全部范围或原始位置。</p>
+          </fieldset>
+        </fieldset>
         <fieldset id="analysis-md-analysis" hidden disabled>
           <legend>MD 输出分析</legend>
           <div class="ca-grid">
@@ -1639,6 +1788,8 @@ function renderMdAnalysis(run, target) {
     const lineFields = find("#analysis-equipment-line-fields");
     const drafts = new Map();
     let activeKind = fields.kind.value;
+    let transportMode = fields.transport_mode.value;
+    const transportDrafts = new Map();
     let viewVersion = 0;
     let manifestVersion = 0;
 
@@ -1654,11 +1805,49 @@ function renderMdAnalysis(run, target) {
       find("#analysis-reactants").hidden = fields.max_conversion_fraction.disabled = model !== "initial_rate_power_law";
     }
 
+    function syncTransport() {
+      const selected = fields.transport_mode.value;
+      if (transportMode !== selected) {
+        const keys = ["field_column", "field_unit", "flux_column", "flux_unit"];
+        transportDrafts.set(transportMode, keys.map(key => fields["transport_" + key].value));
+        keys.forEach((key, index) => {
+          fields["transport_" + key].value = transportDrafts.get(selected)?.[index] ?? "";
+        });
+        transportMode = selected;
+      }
+      const mode = transportModes[selected];
+      const viscosity = selected === "viscosity";
+      find("#analysis-transport-field-label").textContent = mode.field + "列";
+      find("#analysis-transport-field-unit-label").textContent = mode.field + "单位";
+      find("#analysis-transport-flux-label").textContent = mode.flux + "列";
+      find("#analysis-transport-flux-unit-label").textContent = mode.flux + "单位";
+      find("#analysis-transport-stress").hidden = fields.transport_stress_convention.disabled = !viscosity;
+      find("#analysis-transport-hint").textContent = viscosity
+        ? "位置坐标沿速度梯度方向。选择与流向和梯度方向相符的剪切分量，输入已按单位面积归一的应力或动量通量。"
+        : "位置坐标与带符号通量须使用同一正方向。上传已按单位面积归一的通量。";
+      for (const key of ["position", "field", "flux", "time"]) {
+        const examples = transportUnitExamples[key] ?? transportUnitExamples[selected][key];
+        find("#analysis-transport-units-" + key).replaceChildren(...examples.map(value => new Option(value, value)));
+      }
+      syncTransportTime();
+    }
+
+    function syncTransportTime() {
+      const hasTime = !!fields.transport_time_column.value.trim();
+      fields.transport_time_unit.required = hasTime;
+      fields.transport_time_unit.disabled = !hasTime;
+      for (const key of ["time_min", "time_max"]) fields["transport_" + key].disabled = !hasTime;
+    }
+
     function syncKind() {
       const kind = fields.kind.value;
       const kinetics = kind === "kinetics";
       const raw = rawKind(kind);
       const mdAnalysis = ["md_thermo", "md_msd"].includes(kind);
+      const transport = find("#analysis-transport");
+      transport.hidden = transport.disabled = kind !== "md_transport";
+      find("#analysis-advanced").hidden = !transport.hidden;
+      if (!transport.hidden) syncTransport();
       find("#analysis-md-analysis").hidden = find("#analysis-md-analysis").disabled = !mdAnalysis;
       find("#analysis-msd-config").hidden = find("#analysis-msd-config").disabled = kind !== "md_msd";
       if (activeKind !== kind) {
@@ -1679,8 +1868,9 @@ function renderMdAnalysis(run, target) {
       vasp.hidden = vasp.disabled = kind !== "adsorption";
       const rawSection = find("#analysis-a5");
       rawSection.hidden = rawSection.disabled = !raw;
-      upload.accept = { md_thermo: ".log,.lammps,.jsonl,.txt", md_msd: ".lammpstrj,.dump,.lammpsdump,.traj,.txt", adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
+      upload.accept = { md_transport: ".csv,.xlsx,.txt,.dat,.profile,.chunk,.ave,.out", md_thermo: ".log,.lammps,.jsonl,.txt", md_msd: ".lammpstrj,.dump,.lammpsdump,.traj,.txt", adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
       find("#analysis-file-hint").textContent = {
+        md_transport: "上传已配对的位置、场量与带符号通量数据。支持 CSV、XLSX 及包含这些列的 LAMMPS 平均输出。分开的剖面与通量须先配对。",
         md_thermo: "上传原始 log.lammps 或 thermo.jsonl；按原始采样点绘图，可切换输出列。",
         md_msd: "上传含展开坐标或坐标及镜像标记的 LAMMPS 轨迹。",
         adsorption: "上传含 study.json 和 vasprun.xml 的 VASP ZIP。",
@@ -1715,7 +1905,9 @@ function renderMdAnalysis(run, target) {
     }
 
     function syncSheet() {
-      fields.sheet.disabled = !/\.xlsx$/i.test(upload.files[0]?.name ?? "");
+      const xlsx = /\.xlsx$/i.test(upload.files[0]?.name ?? "");
+      fields.sheet.disabled = !xlsx;
+      find("#analysis-transport-sheet").hidden = fields.transport_sheet.disabled = !xlsx;
     }
 
     function jsonObject(value, label, reviver) {
@@ -1732,7 +1924,38 @@ function renderMdAnalysis(run, target) {
       return parsed;
     }
 
+    function transportOptions() {
+      const mode = fields.transport_mode.value;
+      const result = { mode, columns: {}, units: {} };
+      for (const key of ["position", "field", "flux", "time"]) {
+        const column = fields["transport_" + key + "_column"].value.trim();
+        const unit = fields["transport_" + key + "_unit"].value.trim();
+        if (key === "time" && !column) continue;
+        if (!column || !unit) throw new Error("请同时填写对应的列名与单位。");
+        result.columns[key] = column;
+        result.units[key] = unit;
+      }
+      if (mode === "viscosity") result.stress_convention = fields.transport_stress_convention.value;
+      if (fields.transport_driving.value !== "unspecified") result.driving = fields.transport_driving.value;
+      const sheet = fields.transport_sheet.value.trim();
+      if (!fields.transport_sheet.disabled && sheet) result.sheet = sheet;
+      for (const key of ["position_min", "position_max", "time_min", "time_max", "bin_width"]) {
+        const field = fields["transport_" + key];
+        if (!field.disabled && field.value) result[key] = field.valueAsNumber;
+      }
+      for (const axis of ["position", "time"]) {
+        if (result[axis + "_min"] > result[axis + "_max"]) {
+          throw new Error("窗口下限不能大于上限。");
+        }
+      }
+      if (result.bin_width === 0) throw new Error("空间分箱宽度须为正数。");
+      const job = fields.transport_source_job_id.value.trim();
+      if (job) result.source_job_id = job;
+      return result;
+    }
+
     function runOptions() {
+      if (fields.kind.value === "md_transport") return transportOptions();
       const extra = advanced.value.trim();
       const options = {};
       if (fields.kind.value === "adsorption") {
@@ -1863,6 +2086,8 @@ function renderMdAnalysis(run, target) {
     panel.addEventListener("toggle", () => { if (panel.open) void loadHistory(); }, { signal });
     find("#analysis-refresh").addEventListener("click", loadHistory);
     if (panel.open) void loadHistory();
+    fields.transport_mode.addEventListener("change", syncTransport);
+    fields.transport_time_column.addEventListener("input", syncTransportTime);
     form.addEventListener("submit", async event => {
       event.preventDefault();
       const submit = find("#analysis-submit");

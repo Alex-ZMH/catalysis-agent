@@ -9,7 +9,7 @@ import tempfile
 
 from packages.check import OPERATIONS as BASE_OPERATIONS
 
-OPERATIONS = {**BASE_OPERATIONS, "md_thermo": "md.thermo", "md_msd": "md.msd"}
+OPERATIONS = {**BASE_OPERATIONS, "md_thermo": "md.thermo", "md_msd": "md.msd", "md_transport": "md.transport"}
 
 
 def json_bytes(value):
@@ -107,9 +107,11 @@ class Workspace:
             return add(name, data, "derived", [raw_id])
 
         ref_id = None
-        if kind in {"md_thermo", "md_msd"}:
+        if kind in {"md_thermo", "md_msd", "md_transport"}:
             from packages.science.md_analysis import analyze_thermo, analyze_msd
-            analyzer = analyze_thermo if kind == "md_thermo" else analyze_msd
+            from packages.science.md_transport import analyze_transport
+            analyzer = {"md_thermo": analyze_thermo, "md_msd": analyze_msd,
+                        "md_transport": analyze_transport}[kind]
             result = analyzer(filename, content, options)
             normalized = config
             details = {"raw_artifact_id": raw_id, "parameters": options,
@@ -153,7 +155,7 @@ class Workspace:
                         outputs=[out_id, detail_id], artifacts=list(records.values()),
                         quality=quality, quality_flags=sorted(flags))
         summary = dict(id=run_id, kind=kind, origin=origin, created_at=now, filename=filename)
-        index = dict(names=names, raw=raw_id, input=cfg_id if importing or kind in {"md_thermo", "md_msd"} else input_ids[0],
+        index = dict(names=names, raw=raw_id, input=cfg_id if importing or kind in {"md_thermo", "md_msd", "md_transport"} else input_ids[0],
                      result=out_id, details=detail_id)
         if ref_id is not None:
             index["reference_id"] = ref_id
