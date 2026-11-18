@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:adsorption:result:1",
+  "title": "adsorption.result v1",
+  "description": "One outcome per adsorbed structure. Adsorption energy = (E_adsorbed − E_clean − sum(coefficient × E_gas)) / adsorbed_units. Negative values indicate favorable adsorption relative to the declared references. Candidate energies must agree with the independent calculation within 0.001 eV per adsorbate.",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "structure_id": {
+                "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+              },
+              "status": {
+                "const": "comparable"
+              },
+              "normalization": {
+                "const": "per_adsorbate"
+              },
+              "unit": {
+                "const": "eV"
+              },
+              "adsorption_energy": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "structure_id",
+              "status",
+              "normalization",
+              "unit",
+              "adsorption_energy"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "structure_id": {
+                "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+              },
+              "status": {
+                "const": "noncomparable"
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "unconverged",
+                    "finite_size",
+                    "slab_protocol",
+                    "electronic_method",
+                    "reference_protocol",
+                    "reference_stoichiometry",
+                    "charge_balance"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "structure_id",
+              "status",
+              "reasons"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "results"
+  ],
+  "additionalProperties": false
+}

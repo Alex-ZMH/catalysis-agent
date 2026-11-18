@@ -1,0 +1,27 @@
+# Deny by default. Extend only with a reviewed source or test artifact.
+*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/requirements.lock
+!/docs/
+!/docs/acceptance.md
+!/docs/development.md
+!/configs/
+!/configs/profiles/
+!/configs/profiles/intranet.json
+!/contracts/
+!/contracts/v1/
+!/contracts/v1/*.schema.json
+!/packages/
+!/packages/*.py
+!/packages/agent/
+!/packages/agent/*.py
+!/packages/science/
+!/packages/science/*.py
+!/tests/
+!/tests/test_*.py
+!/scripts/
+!/scripts/frontend_baseline.py
+!/baselines/
+!/baselines/frontend.lock.json

@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:kinetics:input:1",
+  "title": "kinetics.input v1",
+  "description": "Positive observations with identifiable training conditions and optional batch-disjoint holdout. Holdout settings may repeat training settings.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "enum": [
+            "experimental",
+            "synthetic"
+          ]
+        },
+        "response_unit": {
+          "enum": [
+            "s^-1",
+            "mol/L/s",
+            "L/mol/s",
+            "L^2/mol^2/s"
+          ]
+        },
+        "acceptance": {
+          "type": "object",
+          "properties": {
+            "max_train_log_rmse": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_holdout_log_rmse": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "max_train_log_rmse"
+          ],
+          "additionalProperties": false
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "observation_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "evidence_id": {
+                "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+              },
+              "batch_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "condition_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "partition": {
+                "enum": [
+                  "train",
+                  "holdout"
+                ]
+              },
+              "temperature_K": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "value": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "relative_uncertainty": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "quality": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "observation_id",
+              "evidence_id",
+              "batch_id",
+              "condition_id",
+              "partition",
+              "temperature_K",
+              "value",
+              "relative_uncertainty",
+              "quality"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "model": {
+          "const": "arrhenius_known_k"
+        }
+      },
+      "required": [
+        "source",
+        "response_unit",
+        "acceptance",
+        "observations",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "enum": [
+            "experimental",
+            "synthetic"
+          ]
+        },
+        "response_unit": {
+          "enum": [
+            "mol/L/s",
+            "mol/(kg_cat*s)",
+            "mol/(m2_cat*s)"
+          ],
+          "description": "Initial-rate basis: per litre of reaction volume, per kilogram of catalyst, or per square metre of catalyst surface."
+        },
+        "acceptance": {
+          "type": "object",
+          "properties": {
+            "max_train_log_rmse": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_holdout_log_rmse": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "max_train_log_rmse"
+          ],
+          "additionalProperties": false
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "observation_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "evidence_id": {
+                "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+              },
+              "batch_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "condition_id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "partition": {
+                "enum": [
+                  "train",
+                  "holdout"
+                ]
+              },
+              "temperature_K": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "value": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "relative_uncertainty": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "quality": {
+                "const": "accepted"
+              },
+              "concentrations": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {
+                  "pattern": "\\S"
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "conversion_fraction": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.1
+              }
+            },
+            "required": [
+              "observation_id",
+              "evidence_id",
+              "batch_id",
+              "condition_id",
+              "partition",
+              "temperature_K",
+              "value",
+              "relative_uncertainty",
+              "quality",
+              "concentrations",
+              "conversion_fraction"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "model": {
+          "const": "initial_rate_power_law"
+        },
+        "concentration_unit": {
+          "const": "mol/L"
+        },
+        "temperature_K": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reactants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_conversion_fraction": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.1
+        }
+      },
+      "required": [
+        "source",
+        "response_unit",
+        "acceptance",
+        "observations",
+        "model",
+        "concentration_unit",
+        "temperature_K",
+        "reactants",
+        "max_conversion_fraction"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

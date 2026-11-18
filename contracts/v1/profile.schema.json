@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:profile:1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile", "data_boundary", "external_egress", "cluster_submission", "heavy_compute", "inventory"],
+  "properties": {
+    "profile": {"const": "intranet-v1"},
+    "data_boundary": {"const": "intranet"},
+    "external_egress": {"const": false},
+    "cluster_submission": {"const": false},
+    "heavy_compute": {"const": "manual_plan_only"},
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compute_nodes", "internal_model_service", "software_licenses", "deidentified_datasets"],
+      "properties": {
+        "compute_nodes": {"$ref": "#/$defs/status"},
+        "internal_model_service": {"$ref": "#/$defs/status"},
+        "software_licenses": {"$ref": "#/$defs/status"},
+        "deidentified_datasets": {"$ref": "#/$defs/status"}
+      }
+    }
+  },
+  "$defs": {"status": {"enum": ["待盘点", "盘点中", "已核实"]}}
+}

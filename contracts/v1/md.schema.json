@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LAMMPS MD import v1",
+  "description": "Normalized Cartesian dump frames and/or scalar time-series samples. Step indices are local to each stream. Restart segments with reset timesteps are separate imports.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {
+    "dump": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_artifact_id",
+        "length_unit",
+        "coordinate_mode",
+        "frames",
+        "time"
+      ],
+      "properties": {
+        "raw_artifact_id": {
+          "$ref": "#/$defs/artifactId"
+        },
+        "length_unit": {
+          "$ref": "#/$defs/unit"
+        },
+        "coordinate_mode": {
+          "enum": [
+            "wrapped",
+            "unwrapped"
+          ],
+          "description": "Cartesian coordinates as stored by the normalized dump, never fractional."
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/frame"
+          }
+        },
+        "time": {
+          "$ref": "#/$defs/time"
+        }
+      }
+    },
+    "time_series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_artifact_id",
+        "columns",
+        "samples",
+        "time"
+      ],
+      "properties": {
+        "raw_artifact_id": {
+          "$ref": "#/$defs/artifactId"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "unit"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "unit": {
+                "$ref": "#/$defs/unit"
+              }
+            }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "timestep",
+              "values"
+            ],
+            "properties": {
+              "timestep": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "values": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "time": {
+                "type": "number",
+                "description": "Physical sample time in the declared unit, required only in explicit mode."
+              }
+            }
+          }
+        },
+        "time": {
+          "$ref": "#/$defs/time"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifactId": {
+      "$ref": "urn:catalysis:contract:run:1#/$defs/id",
+      "description": "Opaque internal artifact ID. File details and provenance are recorded in the separate run manifest."
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Unit label for the declared values. Use '1' for dimensionless quantities."
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 3,
+      "description": "Three Cartesian components in the dump length unit."
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestep",
+        "cell",
+        "atoms"
+      ],
+      "properties": {
+        "timestep": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cell": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "origin",
+            "vectors",
+            "periodic"
+          ],
+          "properties": {
+            "origin": {
+              "$ref": "#/$defs/vector3"
+            },
+            "vectors": {
+              "type": "array",
+              "minItems": 3,
+              "items": {
+                "$ref": "#/$defs/vector3"
+              },
+              "maxItems": 3,
+              "description": "Three Cartesian lattice vectors in a, b, c order, including for triclinic cells."
+            },
+            "periodic": {
+              "type": "array",
+              "minItems": 3,
+              "items": {
+                "type": "boolean"
+              },
+              "maxItems": 3,
+              "description": "Periodicity along the a, b, c lattice vectors, respectively."
+            }
+          }
+        },
+        "atoms": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "position"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "position": {
+                "$ref": "#/$defs/vector3"
+              }
+            }
+          }
+        },
+        "time": {
+          "type": "number",
+          "description": "Physical sample time in the declared unit, required only in explicit mode."
+        }
+      }
+    },
+    "time": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "const": "unknown"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "unit"
+          ],
+          "properties": {
+            "mode": {
+              "const": "explicit"
+            },
+            "unit": {
+              "$ref": "#/$defs/unit"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "dt",
+            "unit",
+            "time_origin",
+            "step_origin"
+          ],
+          "properties": {
+            "mode": {
+              "const": "constant_dt"
+            },
+            "dt": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "unit": {
+              "$ref": "#/$defs/unit"
+            },
+            "time_origin": {
+              "type": "number"
+            },
+            "step_origin": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Physical time equals time_origin + (timestep - step_origin) * dt."
+        }
+      ],
+      "description": "Per-stream physical time declaration. Unknown mode preserves steps without assigning times or duration."
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "dump"
+      ]
+    },
+    {
+      "required": [
+        "time_series"
+      ]
+    }
+  ],
+  "$id": "urn:catalysis:contract:md:1"
+}

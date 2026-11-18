@@ -1,0 +1,13 @@
+{
+  "profile": "intranet-v1",
+  "data_boundary": "intranet",
+  "external_egress": false,
+  "cluster_submission": false,
+  "heavy_compute": "manual_plan_only",
+  "inventory": {
+    "compute_nodes": "待盘点",
+    "internal_model_service": "待盘点",
+    "software_licenses": "待盘点",
+    "deidentified_datasets": "待盘点"
+  }
+}

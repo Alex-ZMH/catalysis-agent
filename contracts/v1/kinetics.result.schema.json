@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:kinetics:result:1",
+  "title": "kinetics.result v1",
+  "description": "Candidate model parameters and reproducible natural-log RMSE metrics. Power law uses concentrations divided by 1 mol/L, so its scale is a rate. The Arrhenius prefactor has the same unit as observed k. Residuals are log(predicted) minus log(observed). RMSE is unweighted. Use null for holdout RMSE when no holdout was evaluated. Interval keys are prefactor and activation_energy for Arrhenius, or rate_at_reference and order:<reactant> for the power law.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "enum": [
+            "experimental",
+            "synthetic"
+          ]
+        },
+        "train_log_rmse": {
+          "type": "number",
+          "minimum": 0
+        },
+        "holdout_log_rmse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "design_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model": {
+          "const": "arrhenius_known_k"
+        },
+        "prefactor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "prefactor_unit": {
+          "enum": [
+            "s^-1",
+            "mol/L/s",
+            "L/mol/s",
+            "L^2/mol^2/s"
+          ]
+        },
+        "activation_energy": {
+          "type": "number"
+        },
+        "activation_energy_unit": {
+          "const": "J/mol"
+        },
+        "validation_scope": {
+          "enum": [
+            "training_only",
+            "independent_batch_repeatability",
+            "independent_batch_new_conditions",
+            "independent_batch_mixed_conditions"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "single_training_batch",
+              "no_holdout",
+              "no_condition_residual_dof"
+            ]
+          }
+        },
+        "residuals": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/residual"
+          }
+        },
+        "parameter_uncertainty": {
+          "$ref": "#/$defs/uncertainty"
+        }
+      },
+      "required": [
+        "source",
+        "train_log_rmse",
+        "holdout_log_rmse",
+        "design_rank",
+        "model",
+        "prefactor",
+        "prefactor_unit",
+        "activation_energy",
+        "activation_energy_unit",
+        "validation_scope",
+        "warnings",
+        "residuals",
+        "parameter_uncertainty"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "source": {
+          "enum": [
+            "experimental",
+            "synthetic"
+          ]
+        },
+        "train_log_rmse": {
+          "type": "number",
+          "minimum": 0
+        },
+        "holdout_log_rmse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "design_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model": {
+          "const": "initial_rate_power_law"
+        },
+        "reference_concentration_mol_L": {
+          "const": 1
+        },
+        "rate_at_reference": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rate_at_reference_unit": {
+          "enum": [
+            "mol/L/s",
+            "mol/(kg_cat*s)",
+            "mol/(m2_cat*s)"
+          ],
+          "description": "Rate basis at the reference concentrations. Must match the input response_unit exactly."
+        },
+        "orders": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "validation_scope": {
+          "enum": [
+            "training_only",
+            "independent_batch_repeatability",
+            "independent_batch_new_conditions",
+            "independent_batch_mixed_conditions"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "single_training_batch",
+              "no_holdout",
+              "no_condition_residual_dof"
+            ]
+          }
+        },
+        "residuals": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/residual"
+          }
+        },
+        "parameter_uncertainty": {
+          "$ref": "#/$defs/uncertainty"
+        }
+      },
+      "required": [
+        "source",
+        "train_log_rmse",
+        "holdout_log_rmse",
+        "design_rank",
+        "model",
+        "reference_concentration_mol_L",
+        "rate_at_reference",
+        "rate_at_reference_unit",
+        "orders",
+        "validation_scope",
+        "warnings",
+        "residuals",
+        "parameter_uncertainty"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "residual": {
+      "type": "object",
+      "properties": {
+        "observation_id": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "log_residual": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "observation_id",
+        "log_residual"
+      ],
+      "additionalProperties": false
+    },
+    "uncertainty": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "reported"
+            },
+            "method": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "evidence_id": {
+              "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+            },
+            "confidence_level": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "intervals": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "lower": {
+                    "type": "number"
+                  },
+                  "upper": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lower",
+                  "upper"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "status",
+            "method",
+            "evidence_id",
+            "confidence_level",
+            "intervals"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

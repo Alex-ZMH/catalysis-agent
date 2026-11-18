@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:run:1",
+  "title": "Project-local provenance for a completed analysis or import",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "project_id", "run_id", "operator_id", "recorded_at", "operation", "method", "code_commit", "profile", "parameters_artifact", "inputs", "outputs", "artifacts", "quality", "quality_flags"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "project_id": {"$ref": "#/$defs/id"},
+    "run_id": {"$ref": "#/$defs/id"},
+    "operator_id": {"$ref": "#/$defs/id"},
+    "recorded_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"},
+    "operation": {"enum": ["adsorption.compare", "kinetics.fit", "md.import", "equipment.import"]},
+    "method": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}}
+    },
+    "code_commit": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+    "profile": {"const": "intranet-v1"},
+    "parameters_artifact": {"$ref": "#/$defs/id"},
+    "inputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "artifacts": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/artifact"}},
+    "quality": {"enum": ["accepted", "review", "blocked"]},
+    "quality_flags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9]", "not": {"pattern": "[^A-Za-z0-9_-]"}},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "project_id", "sha256", "size_bytes", "format", "origin", "role", "parents"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "project_id": {"$ref": "#/$defs/id"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "format": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"},
+        "origin": {"enum": ["synthetic", "research"]},
+        "role": {"enum": ["source", "parameters", "derived"]},
+        "parents": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    }
+  }
+}

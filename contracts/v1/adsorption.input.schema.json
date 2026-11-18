@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:catalysis:contract:adsorption:input:1",
+  "title": "adsorption.input v1",
+  "description": "Relaxed periodic bulk, relaxed clean slab, relaxed adsorbed configurations and isolated gas references. Reference coefficients count gas molecules per simulation cell.",
+  "type": "object",
+  "properties": {
+    "energy_unit": {
+      "const": "eV"
+    },
+    "adsorbate_formula": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Z][a-z]?$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "bulk": {
+      "type": "object",
+      "properties": {
+        "structure_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        },
+        "energy_eV": {
+          "type": "number"
+        },
+        "composition": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Z][a-z]?$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "k_grid": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "convergence": {
+          "$ref": "#/$defs/convergence"
+        },
+        "vacuum_angstrom": {
+          "const": 0
+        },
+        "k_grid_centering": {
+          "enum": [
+            "gamma",
+            "monkhorst_pack"
+          ]
+        }
+      },
+      "required": [
+        "structure_id",
+        "energy_eV",
+        "composition",
+        "method",
+        "k_grid",
+        "convergence",
+        "vacuum_angstrom",
+        "k_grid_centering"
+      ],
+      "additionalProperties": false
+    },
+    "clean_slab": {
+      "type": "object",
+      "properties": {
+        "structure_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        },
+        "energy_eV": {
+          "type": "number"
+        },
+        "composition": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Z][a-z]?$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "k_grid": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "convergence": {
+          "$ref": "#/$defs/convergence"
+        },
+        "bulk_structure_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        },
+        "bulk_to_slab_atom_map_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        },
+        "miller_indices": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "termination": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "fixed_layers_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        },
+        "slab_thickness_angstrom": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "vacuum_angstrom": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "finite_size_check": {
+          "type": "object",
+          "properties": {
+            "evidence_id": {
+              "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+            },
+            "thickness_effect_eV": {
+              "type": "number",
+              "minimum": 0
+            },
+            "vacuum_effect_eV": {
+              "type": "number",
+              "minimum": 0
+            },
+            "limit_eV": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "evidence_id",
+            "thickness_effect_eV",
+            "vacuum_effect_eV",
+            "limit_eV"
+          ],
+          "additionalProperties": false
+        },
+        "k_grid_centering": {
+          "enum": [
+            "gamma",
+            "monkhorst_pack"
+          ]
+        }
+      },
+      "required": [
+        "structure_id",
+        "energy_eV",
+        "composition",
+        "method",
+        "k_grid",
+        "convergence",
+        "bulk_structure_id",
+        "bulk_to_slab_atom_map_id",
+        "miller_indices",
+        "termination",
+        "fixed_layers_id",
+        "slab_thickness_angstrom",
+        "vacuum_angstrom",
+        "finite_size_check",
+        "k_grid_centering"
+      ],
+      "additionalProperties": false
+    },
+    "configurations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "structure_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "energy_eV": {
+            "type": "number"
+          },
+          "composition": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[A-Z][a-z]?$"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "method": {
+            "$ref": "#/$defs/method"
+          },
+          "k_grid": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "convergence": {
+            "$ref": "#/$defs/convergence"
+          },
+          "clean_structure_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "clean_to_adsorbed_atom_map_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "fixed_layers_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "vacuum_angstrom": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "adsorbed_units": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reference_coefficients": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+            },
+            "additionalProperties": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "k_grid_centering": {
+            "enum": [
+              "gamma",
+              "monkhorst_pack"
+            ]
+          }
+        },
+        "required": [
+          "structure_id",
+          "energy_eV",
+          "composition",
+          "method",
+          "k_grid",
+          "convergence",
+          "clean_structure_id",
+          "clean_to_adsorbed_atom_map_id",
+          "fixed_layers_id",
+          "vacuum_angstrom",
+          "adsorbed_units",
+          "reference_coefficients",
+          "k_grid_centering"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "gas_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "structure_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "energy_eV": {
+            "type": "number"
+          },
+          "composition": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[A-Z][a-z]?$"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "method": {
+            "$ref": "#/$defs/method"
+          },
+          "k_grid": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "convergence": {
+            "$ref": "#/$defs/convergence"
+          },
+          "box_lengths_angstrom": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "isolation_check": {
+            "type": "object",
+            "properties": {
+              "evidence_id": {
+                "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+              },
+              "effect_eV": {
+                "type": "number",
+                "minimum": 0
+              },
+              "limit_eV": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "evidence_id",
+              "effect_eV",
+              "limit_eV"
+            ],
+            "additionalProperties": false
+          },
+          "k_grid_centering": {
+            "enum": [
+              "gamma",
+              "monkhorst_pack"
+            ]
+          }
+        },
+        "required": [
+          "structure_id",
+          "energy_eV",
+          "composition",
+          "method",
+          "k_grid",
+          "convergence",
+          "box_lengths_angstrom",
+          "isolation_check",
+          "k_grid_centering"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "energy_unit",
+    "adsorbate_formula",
+    "bulk",
+    "clean_slab",
+    "configurations",
+    "gas_references"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "method": {
+      "type": "object",
+      "properties": {
+        "functional": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "pseudopotential_ids": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "cutoff_eV": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "hubbard_U_eV": {
+          "type": "object",
+          "minProperties": 0,
+          "propertyNames": {
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "dispersion": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "occupation_scheme": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "smearing_eV": {
+          "type": "number",
+          "minimum": 0
+        },
+        "charge_e": {
+          "type": "number"
+        },
+        "magnetism": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "nonmagnetic",
+                "collinear",
+                "noncollinear"
+              ]
+            },
+            "spin_orbit": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "mode",
+            "spin_orbit",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "functional",
+        "pseudopotential_ids",
+        "cutoff_eV",
+        "hubbard_U_eV",
+        "dispersion",
+        "occupation_scheme",
+        "smearing_eV",
+        "charge_e",
+        "magnetism"
+      ],
+      "additionalProperties": false
+    },
+    "convergence": {
+      "type": "object",
+      "properties": {
+        "scf_residual_eV": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scf_limit_eV": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_free_force_eV_per_angstrom": {
+          "type": "number",
+          "minimum": 0
+        },
+        "force_limit_eV_per_angstrom": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "evidence_id": {
+          "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+        }
+      },
+      "required": [
+        "scf_residual_eV",
+        "scf_limit_eV",
+        "max_free_force_eV_per_angstrom",
+        "force_limit_eV_per_angstrom",
+        "evidence_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

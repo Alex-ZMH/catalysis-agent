@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VTU equipment import v1",
+  "description": "A normalized VTU mesh with point and/or cell data. Indices are zero-based and follow the supplied mesh order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "raw_artifact_id",
+    "length_unit",
+    "points",
+    "cells",
+    "fields"
+  ],
+  "properties": {
+    "raw_artifact_id": {
+      "$ref": "#/$defs/artifactId"
+    },
+    "length_unit": {
+      "$ref": "#/$defs/unit"
+    },
+    "points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/vector3"
+      }
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "vtk_type",
+          "point_indices"
+        ],
+        "properties": {
+          "vtk_type": {
+            "enum": [
+              1,
+              3,
+              5,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "description": "Supported fixed-arity linear VTK cell type codes."
+          },
+          "point_indices": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "association",
+          "components",
+          "unit",
+          "values"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "association": {
+            "$ref": "#/$defs/association"
+          },
+          "components": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "unit": {
+            "$ref": "#/$defs/unit"
+          },
+          "values": {
+            "type": "array",
+            "minItems": 0,
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "number"
+              }
+            },
+            "description": "One component tuple per mesh entity of this association. Scalars are one-element tuples."
+          }
+        }
+      }
+    },
+    "line_profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "coordinate_frame",
+          "a",
+          "b",
+          "unit",
+          "samples"
+        ],
+        "properties": {
+          "field": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "association",
+              "selection"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "association": {
+                "$ref": "#/$defs/association"
+              },
+              "selection": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "index"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "component"
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "magnitude"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "coordinate_frame": {
+            "const": "mesh",
+            "description": "Endpoints are already expressed in the mesh coordinate frame and mesh length unit. No transform is applied."
+          },
+          "a": {
+            "$ref": "#/$defs/vector3"
+          },
+          "b": {
+            "$ref": "#/$defs/vector3"
+          },
+          "unit": {
+            "$ref": "#/$defs/unit"
+          },
+          "samples": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fraction",
+                "value"
+              ],
+              "properties": {
+                "fraction": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Physical position is A + fraction * (B - A). Fractions increase from 0 through 1."
+                },
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "Null marks a masked sample outside the sampling domain."
+                }
+              }
+            }
+          },
+          "reference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "reference_artifact_id",
+              "values",
+              "unit",
+              "absolute_tolerance"
+            ],
+            "properties": {
+              "source": {
+                "const": "user_provided"
+              },
+              "reference_artifact_id": {
+                "$ref": "#/$defs/artifactId",
+                "description": "Independent reference evidence artifact in the separate run manifest."
+              },
+              "values": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "Null marks a masked sample outside the sampling domain."
+                },
+                "contains": {
+                  "type": "number"
+                },
+                "description": "Independent values aligned to the sample fractions, with the same null mask."
+              },
+              "unit": {
+                "$ref": "#/$defs/unit"
+              },
+              "absolute_tolerance": {
+                "type": "number",
+                "minimum": 0
+              },
+              "relative_tolerance": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Optional fraction of the absolute reference value."
+              }
+            },
+            "description": "At each unmasked sample, the error must be at most absolute_tolerance + relative_tolerance * abs(reference value)."
+          }
+        }
+      },
+      "description": "Supplied scalar samples along physical A\u2013B lines. Vector magnitude means Euclidean norm. The contract checks alignment and supplied reference values without reconstructing mesh sampling."
+    }
+  },
+  "$defs": {
+    "artifactId": {
+      "$ref": "urn:catalysis:contract:run:1#/$defs/id",
+      "description": "Opaque internal artifact ID. File details and provenance are recorded in the separate run manifest."
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Unit label for the declared values. Use '1' for dimensionless quantities."
+    },
+    "association": {
+      "enum": [
+        "point",
+        "cell"
+      ]
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 3
+    }
+  },
+  "$id": "urn:catalysis:contract:equipment:1"
+}
