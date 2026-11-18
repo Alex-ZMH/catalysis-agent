@@ -569,7 +569,7 @@ function renderMdAnalysis(run, target) {
   }
 
 
-  function mountPlans(find, panel, request, signal) {
+  function mountPlans(find, panel, request, signal, onUpdate) {
     const stateLabels = { pending: "待人工确认", confirmed: "已确认计划", retryable: "提交前检查失败，可重试",
       submitting: "已受理确认，等待调度回执", unknown: "提交结果待核对", submitted: "已关联 Slurm 作业" };
     const workflows = { adsorption: "vasp-relaxation", md: "md-simulation", equipment: "equipment-simulation" };
@@ -586,6 +586,7 @@ function renderMdAnalysis(run, target) {
     let runs = new Map();
     let records = new Map();
     let syntheticSubmission = false;
+    let mdSubmission = false;
     let recovery = null;
     let receiptPlans = new Set();
     let ready = false;
@@ -633,7 +634,10 @@ function renderMdAnalysis(run, target) {
       receipt.hidden = !receiptPlans.has(record?.id);
       if (receipt.hidden) receipt.removeAttribute("href");
       else receipt.href = projectPath(`/api/plans/${encodeURIComponent(record.id)}/receipt`);
-      const schedulerUnavailable = record?.spec.mode === "slurm-synthetic" && !syntheticSubmission;
+      const md = record?.spec.mode === "slurm-md";
+      find("#a6-md-status").hidden = !md || !["submitting", "unknown", "submitted"].includes(state);
+      const schedulerUnavailable = (record?.spec.mode === "slurm-synthetic" && !syntheticSubmission)
+        || (md && (!mdSubmission || find("#md-job-form").hidden));
       for (const button of [confirm, retry, reconcile]) button.disabled = !!recovery || busy || !ready || schedulerUnavailable;
       if (!record) return;
       const spec = record.spec;
@@ -643,10 +647,12 @@ function renderMdAnalysis(run, target) {
         ["流程", spec.workflow],
         ["CPU / GPU / 分钟", `${spec.cpus} / ${spec.gpus} / ${spec.minutes}`],
       ]));
-      confirm.textContent = spec.mode === "slurm-synthetic" ? "确认并提交合成作业" : "确认计划";
+      find("#a6-source-sha").closest("div").hidden = md;
+      confirm.textContent = md ? "确认并提交 LAMMPS 作业"
+        : spec.mode === "slurm-synthetic" ? "确认并提交合成作业" : "确认计划";
       const mode = spec.mode === "slurm-synthetic"
         ? (syntheticSubmission && spec.origin === "synthetic" ? "人工确认后由 Slurm 调度合成 V100 作业" : "当前服务未启用此计划的合成作业提交")
-        : "仅记录计划";
+        : md ? "人工确认后由 Slurm 调度 LAMMPS" : "仅记录计划";
       for (const [key, value] of Object.entries({
         "source-sha": spec.source_sha256, mode: recovery ? "查看归档审批" : mode, state: stateLabels[state] ?? state,
         attempts: record.attempts, "job-id": record.job_id ?? "—",
@@ -664,13 +670,19 @@ function renderMdAnalysis(run, target) {
       plans.value = records.has(selected) ? selected : "";
     }
 
+    function publishPlans() {
+      onUpdate({ records, enabled: mdSubmission, recovery });
+    }
+
     function updatePlans(data) {
+      mdSubmission = data.md_submission === true;
       syntheticSubmission = data.synthetic_submission === true;
       recovery = data.recovery ?? null;
       receiptPlans = new Set(data.receipt_plan_ids ?? []);
       records = new Map(data.plans.map(record => [record.id, record]));
       renderPlans(plans.value);
       ready = true;
+      publishPlans();
     }
 
     async function perform(task, recover = false) {
@@ -690,6 +702,10 @@ function renderMdAnalysis(run, target) {
           } catch {
             // Keep actions disabled until the next successful refresh.
           }
+        }
+        if (!ready) {
+          mdSubmission = false;
+          publishPlans();
         }
         setStatus(status, error.message, true);
       } finally {
@@ -713,8 +729,18 @@ function renderMdAnalysis(run, target) {
 
     async function postPlan(path, body) {
       const record = await request(path, JSON.stringify(body), undefined, { "Content-Type": "application/json" });
-      records.set(record.id, record);
+      selectPlan(record);
+    }
+
+    function selectPlan(record, reveal = false, preferCurrent = false) {
+      records.set(record.id, preferCurrent ? records.get(record.id) ?? record : record);
       renderPlans(record.id);
+      renderPlan();
+      publishPlans();
+      if (reveal) {
+        review.scrollIntoView({ block: "start" });
+        (confirm.hidden || confirm.disabled ? plans : confirm).focus({ preventScroll: true });
+      }
     }
 
     source.addEventListener("change", () => {
@@ -753,7 +779,7 @@ function renderMdAnalysis(run, target) {
     }
 
     if (panel.open) void refreshPlans();
-    return refreshPlans;
+    return { refreshPlans, selectPlan };
   }
 
   async function mount() {
@@ -940,6 +966,7 @@ function renderMdAnalysis(run, target) {
             <button id="a6-confirm" type="button" hidden>确认计划</button>
             <button id="a6-retry" type="button" hidden>确认重试</button>
             <button id="a6-reconcile" type="button" hidden>查询回执</button>
+            <button id="a6-md-status" type="button" hidden>查看 LAMMPS 调度状态</button>
           </div>
           <h4>计划事件</h4>
           <ol id="a6-events"></ol>
@@ -980,17 +1007,55 @@ function renderMdAnalysis(run, target) {
         </form>
       </details>
       <details class="ca-cell" id="md-job">
-        <summary>LAMMPS 作业配置</summary>
+        <summary>LAMMPS 作业配置与调度</summary>
         <form id="md-job-form">
           <p id="md-job-source" class="ca-muted">上传结构，或从 VASP 结果选择结构。</p>
           <label>独立结构<input id="md-job-file" type="file"></label>
           <label>作业配置 JSON<textarea id="md-job-config" rows="9" required></textarea></label>
           <label>EAM 势函数文件<input id="md-job-potential" type="file"></label>
-          <p class="ca-muted">支持显式 LJ 参数和 EAM/alloy 文件。输入步长、温度、系综与三轴边界，下载作业包后在 V100 运行。</p>
+          <p class="ca-muted">支持显式 LJ 参数和 EAM/alloy 文件。输入步长、温度、系综与三轴边界，可下载作业包，或在已启用调度的项目中发起人工确认。</p>
           <a href="/guide/md-job" target="_blank" rel="noopener">配置字段与运行命令</a>
-          <button id="md-job-submit" class="ca-primary" type="submit">生成 LAMMPS 作业包</button>
+          <fieldset id="md-slurm-resources" hidden>
+            <legend>Slurm 资源</legend>
+            <div class="ca-grid ca-axes">
+              <label>CPU<input id="md-slurm-cpus" type="number" min="1" step="1" value="1"></label>
+              <label>GPU<input id="md-slurm-gpus" type="number" min="0" max="1" step="1" value="0"></label>
+              <label>时限（分钟）<input id="md-slurm-minutes" type="number" min="1" step="1" value="5"></label>
+            </div>
+            <label>检查点间隔（步）<input id="md-slurm-restart-every" type="number" min="1" step="1" placeholder="也可在 JSON 中填写 restart_every"></label>
+          </fieldset>
+          <div class="ca-md-actions">
+            <button id="md-job-submit" class="ca-primary" type="submit" formnovalidate>生成 LAMMPS 作业包</button>
+            <button id="md-slurm-create" type="button" hidden>创建 Slurm 待确认计划</button>
+            <button id="md-slurm-new" type="button" hidden>新建另一份计划</button>
+          </div>
           <p id="md-job-status" role="status"></p>
         </form>
+        <section id="md-slurm" class="ca-md-queue" aria-labelledby="md-slurm-title" hidden>
+          <div class="ca-heading">
+            <h3 id="md-slurm-title">LAMMPS 调度与恢复</h3>
+            <button id="md-slurm-refresh" type="button">刷新作业</button>
+          </div>
+          <label>已确认的调度计划<select id="md-slurm-jobs" disabled><option value="">选择作业</option></select></label>
+          <p id="md-slurm-status" role="status"></p>
+          <div id="md-slurm-detail" hidden>
+            <div id="md-slurm-metrics"></div>
+            <p id="md-slurm-progress" class="ca-md-progress"></p>
+            <ul id="md-slurm-artifacts" class="ca-artifacts" hidden></ul>
+            <div class="ca-md-actions">
+              <button id="md-slurm-cancel" type="button" hidden>取消 Slurm 作业</button>
+            </div>
+            <form id="md-slurm-recovery" hidden>
+              <h4>从检查点恢复</h4>
+              <div class="ca-grid">
+                <label>检查点<select id="md-slurm-checkpoint" required></select></label>
+                <label>追加步数<input id="md-slurm-steps" type="number" min="1" step="1" required></label>
+              </div>
+              <p class="ca-muted">复用上方的 Slurm 资源设置。恢复会新建计划，仍需人工确认。</p>
+              <button id="md-slurm-restart" type="submit">创建恢复计划</button>
+            </form>
+          </div>
+        </section>
       </details>
       <section id="a1-backups" aria-labelledby="a1-backup-title" hidden>
         <div class="ca-heading"><h2 id="a1-backup-title">项目备份</h2><button id="a1-backup-refresh" type="button">刷新备份</button></div>
@@ -1141,7 +1206,7 @@ function renderMdAnalysis(run, target) {
     };
     workbench.hidden = false;
     workbench.dataset.role = allowed.get(project);
-    find("#md-handoff").hidden = find("#md-job").hidden = allowed.get(project) === "viewer";
+    find("#md-handoff").hidden = find("#md-job-form").hidden = allowed.get(project) === "viewer";
     mountWorkspace(panel, workbench, projectRequest, controller.signal);
     if (allowed.get(project) === "admin") {
       const backups = find("#a1-backups");
@@ -1190,54 +1255,355 @@ function renderMdAnalysis(run, target) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function mountMdJob(find, signal) {
+  function mountMdJob(find, panel, request, signal, selectPlan, refreshPlans) {
     const section = find("#md-job");
     const form = find("#md-job-form");
     const file = find("#md-job-file");
+    const configInput = find("#md-job-config");
     const status = find("#md-job-status");
     const source = find("#md-job-source");
+    const submit = find("#md-job-submit");
+    const create = find("#md-slurm-create");
+    const newPlan = find("#md-slurm-new");
+    const queue = find("#md-slurm");
+    const jobs = find("#md-slurm-jobs");
+    const jobStatus = find("#md-slurm-status");
+    const refresh = find("#md-slurm-refresh");
+    const cancel = find("#md-slurm-cancel");
+    const recovery = find("#md-slurm-recovery");
+    const checkpoints = find("#md-slurm-checkpoint");
+    const steps = find("#md-slurm-steps");
+    const restartEvery = find("#md-slurm-restart-every");
+    const resources = Object.fromEntries(["cpus", "gpus", "minutes"]
+      .map(key => [key, find("#md-slurm-" + key)]));
+    const json = { "Content-Type": "application/json" };
+    const labels = {
+      PENDING: "排队中", CONFIGURING: "分配资源中", RUNNING: "运行中", COMPLETING: "收尾中",
+      COMPLETED: "已完成", CANCELLED: "已取消", FAILED: "失败", TIMEOUT: "超时",
+      OUT_OF_MEMORY: "内存不足", NODE_FAIL: "节点故障", PREEMPTED: "已抢占", SUSPENDED: "已暂停",
+    };
     let selected;
+    let records = new Map();
+    let writable = false;
+    let busy = false;
+    let attempt;
+    let current;
+    let fresh = false;
+    let acting = false;
+    let revision = 0;
+    let timer;
+
+    const post = (path, body) => request(path, JSON.stringify(body), undefined, json);
+    const jobPath = (id, action) => `/api/plans/${encodeURIComponent(id)}/${action}`;
+    const visible = () => panel.open && section.open && !queue.hidden && !document.hidden && !signal?.aborted;
+
+    function syncCreate() {
+      find("#md-slurm-resources").hidden = create.hidden = !writable;
+      newPlan.hidden = !writable || !attempt;
+      create.disabled = newPlan.disabled = submit.disabled = busy;
+      create.textContent = attempt?.record ? "打开已有确认计划"
+        : attempt ? "重试创建 Slurm 计划" : "创建 Slurm 待确认计划";
+    }
+
+    function resetAttempt() {
+      attempt = undefined;
+      syncCreate();
+    }
+
+    function formBody(options) {
+      const body = new FormData();
+      if (selected) {
+        for (const [key, value] of Object.entries(selected)) body.set(key, value);
+      } else if (file.files[0]) {
+        body.set("file", file.files[0]);
+      } else {
+        throw new Error("请先选择结构。");
+      }
+      const potential = find("#md-job-potential").files[0];
+      if (potential) body.set("potential", potential);
+      body.set("options", options);
+      return body;
+    }
+
+    function readResources() {
+      return Object.fromEntries(Object.entries(resources).map(([key, field]) => {
+        if (!field.value || !field.checkValidity() || !Number.isSafeInteger(field.valueAsNumber)) {
+          field.reportValidity();
+          throw new Error("请填写有效的 Slurm 资源。");
+        }
+        return [key, field.valueAsNumber];
+      }));
+    }
+
+    function requestId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      // getRandomValues is also available on the V100 intranet over HTTP.
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 15) | 64;
+      bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+      return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+    }
+
     find("#analysis-results").addEventListener("click", event => {
       const button = event.target.closest("button[data-md-run]");
-      if (!button || section.hidden) return;
+      if (!button || form.hidden) return;
       selected = { run_id: button.dataset.mdRun, artifact_id: button.dataset.mdArtifact };
       file.value = "";
       source.textContent = button.dataset.mdLabel;
+      resetAttempt();
       section.open = true;
       section.scrollIntoView({ block: "start" });
-      find("#md-job-config").focus({ preventScroll: true });
+      configInput.focus({ preventScroll: true });
     });
     file.addEventListener("change", () => {
-      if (file.files[0]) {
-        selected = undefined;
-        source.textContent = file.files[0].name;
-      }
+      selected = undefined;
+      source.textContent = file.files[0]?.name ?? "上传结构，或从 VASP 结果选择结构。";
+    });
+    form.addEventListener("input", resetAttempt);
+    form.addEventListener("change", resetAttempt);
+    newPlan.addEventListener("click", () => {
+      resetAttempt();
+      setStatus(status, "下一次创建会生成新的待确认计划。");
     });
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      const submit = find("#md-job-submit");
-      submit.disabled = true;
+      if (busy || form.hidden || !configInput.reportValidity()) return;
+      busy = true;
+      syncCreate();
       setStatus(status, "正在生成 LAMMPS 作业包…");
       try {
-        const body = new FormData();
-        if (selected) {
-          for (const [key, value] of Object.entries(selected)) body.set(key, value);
-        } else if (file.files[0]) {
-          body.set("file", file.files[0]);
-        } else {
-          throw new Error("请先选择结构。");
-        }
-        const potential = find("#md-job-potential").files[0];
-        if (potential) body.set("potential", potential);
-        body.set("options", find("#md-job-config").value);
-        await exportZip("/api/md-job", body, signal, "lammps-md-job.zip");
+        await exportZip("/api/md-job", formBody(configInput.value), signal, "lammps-md-job.zip");
         setStatus(status, "已生成 LAMMPS 作业包。");
       } catch (error) {
         if (!signal?.aborted) setStatus(status, error.message, true);
       } finally {
-        submit.disabled = false;
+        busy = false;
+        syncCreate();
       }
     });
+    create.addEventListener("click", async () => {
+      if (busy || !writable) return;
+      if (attempt?.record) {
+        selectPlan(attempt.record, true, true);
+        return;
+      }
+      busy = true;
+      syncCreate();
+      setStatus(status, "正在创建待确认计划…");
+      try {
+        if (!attempt) {
+          let config;
+          try {
+            config = JSON.parse(configInput.value);
+          } catch {
+            throw new Error("请填写合法的作业配置 JSON。");
+          }
+          if (!config || Array.isArray(config) || typeof config !== "object") {
+            throw new Error("作业配置必须是 JSON 对象。");
+          }
+          if (restartEvery.value) config.restart_every = restartEvery.valueAsNumber;
+          if (!Number.isSafeInteger(config.restart_every) || config.restart_every < 1) {
+            throw new Error("请填写正整数检查点间隔（restart_every）。");
+          }
+          attempt = { body: formBody(JSON.stringify({ config, ...readResources(), request_id: requestId() })) };
+        }
+        const pending = attempt;
+        pending.record = await request("/api/md-job/plan", pending.body);
+        selectPlan(pending.record, true);
+        setStatus(status, pending.record.state === "pending" ? "计划已创建。请在计划核对区人工确认。"
+          : "已打开该请求的现有计划。");
+      } catch (error) {
+        if (!signal?.aborted) setStatus(status, error.message, true);
+      } finally {
+        busy = false;
+        syncCreate();
+      }
+    });
+
+    function renderJob() {
+      find("#md-slurm-detail").hidden = !current;
+      jobs.disabled = acting || !records.size;
+      refresh.disabled = acting;
+      cancel.hidden = !(writable && current?.can_cancel);
+      recovery.hidden = !(writable && current?.can_restart && current.checkpoints?.length);
+      cancel.disabled = acting || !fresh;
+      find("#md-slurm-restart").disabled = acting || !fresh;
+      checkpoints.disabled = steps.disabled = acting || !fresh;
+      if (!current) return;
+      find("#md-slurm-metrics").replaceChildren(metrics([
+        ["Slurm 作业号", current.job_id ?? "等待调度回执"],
+        ["Slurm 状态", labels[current.scheduler_state] ?? current.scheduler_state ?? "暂无状态"],
+        ["调度原因", current.reason], ["运行器状态", current.runner_state],
+      ]));
+      const observed = current.progress;
+      const reported = [];
+      if (observed?.step != null) reported.push(`已报告步数 ${observed.step}`);
+      if (observed?.start_step != null && observed?.target_step != null) {
+        reported.push(`计划步数 ${observed.start_step} → ${observed.target_step}`);
+      }
+      if (Number.isFinite(observed?.fraction) && observed.fraction >= 0 && observed.fraction <= 1) {
+        reported.push(`${(observed.fraction * 100).toFixed(1)}%`);
+      }
+      find("#md-slurm-progress").textContent = reported.join(" · ") || "暂无热力学步数回执。";
+      const artifacts = find("#md-slurm-artifacts");
+      artifacts.replaceChildren(...(current.artifacts ?? []).map(artifact => {
+        const row = element("li");
+        row.append(downloadLink(artifact.url, artifact.name));
+        return row;
+      }));
+      artifacts.hidden = !artifacts.childElementCount;
+      const options = [new Option("选择检查点", ""), ...(current.checkpoints ?? []).map(item =>
+        new Option(`步数 ${item.step} · ${item.id}`, item.id))];
+      if (options.length !== checkpoints.length || options.some((option, index) =>
+        option.value !== checkpoints.options[index].value || option.text !== checkpoints.options[index].text)) {
+        const checkpoint = checkpoints.value;
+        checkpoints.replaceChildren(...options);
+        checkpoints.value = options.some(option => option.value === checkpoint) ? checkpoint : "";
+      }
+    }
+
+    function schedule() {
+      clearTimeout(timer);
+      if (visible() && jobs.value && !acting && (!current?.terminal || !fresh)) {
+        timer = setTimeout(() => void loadJob(), 5000);
+      }
+    }
+
+    async function loadJob(force = false) {
+      clearTimeout(timer);
+      if (!jobs.value || acting || (!force && !visible())) return;
+      const id = jobs.value;
+      const version = ++revision;
+      try {
+        const result = await request(jobPath(id, "status"));
+        if (version !== revision || signal?.aborted) return;
+        current = result;
+        fresh = true;
+        setStatus(jobStatus, "");
+      } catch (error) {
+        if (version !== revision || signal?.aborted) return;
+        fresh = false;
+        setStatus(jobStatus, `读取作业状态失败，显示的回执可能过期。 ${error.message}`, true);
+      } finally {
+        if (version === revision && !signal?.aborted) {
+          renderJob();
+          schedule();
+        }
+      }
+    }
+
+    function pickJob(id) {
+      if (acting || !records.has(id)) return;
+      jobs.value = id;
+      ++revision;
+      current = undefined;
+      fresh = false;
+      checkpoints.value = steps.value = "";
+      renderJob();
+      setStatus(jobStatus, "正在读取 Slurm 作业状态…");
+      void loadJob(true);
+    }
+
+    async function act(action, body) {
+      const id = jobs.value;
+      if (!id || acting || !fresh || !writable) return;
+      acting = true;
+      ++revision;
+      clearTimeout(timer);
+      renderJob();
+      setStatus(jobStatus, action === "cancel" ? "正在请求取消作业…" : "正在创建恢复计划…");
+      try {
+        const result = await post(jobPath(id, action), body);
+        if (signal?.aborted) return;
+        if (action === "restart") {
+          selectPlan(result, true);
+          setStatus(jobStatus, result.state === "pending" ? "恢复计划已创建，等待人工确认。"
+            : "已打开该检查点的现有恢复计划。");
+        } else {
+          current = result;
+          setStatus(jobStatus, "已提交取消请求。");
+        }
+      } catch (error) {
+        if (!signal?.aborted) {
+          fresh = false;
+          setStatus(jobStatus, error.message, true);
+        }
+      } finally {
+        acting = false;
+        if (!signal?.aborted) {
+          renderJob();
+          schedule();
+        }
+      }
+    }
+
+    refresh.addEventListener("click", async () => {
+      await refreshPlans();
+      if (jobs.value) void loadJob(true);
+    });
+    jobs.addEventListener("change", () => {
+      if (jobs.value) pickJob(jobs.value);
+      else {
+        ++revision;
+        clearTimeout(timer);
+        current = undefined;
+        fresh = false;
+        renderJob();
+        setStatus(jobStatus, "");
+      }
+    });
+    find("#a6-md-status").addEventListener("click", () => {
+      section.open = true;
+      pickJob(find("#a6-plans").value);
+      queue.scrollIntoView({ block: "start" });
+      jobs.focus({ preventScroll: true });
+    });
+    cancel.addEventListener("click", () => {
+      if (fresh && current?.can_cancel && window.confirm(`取消 Slurm 作业 ${current.job_id}？`)) {
+        void act("cancel", { confirmed: true });
+      }
+    });
+    recovery.addEventListener("submit", event => {
+      event.preventDefault();
+      if (!fresh || !current?.can_restart || !recovery.reportValidity()) return;
+      try {
+        if (!Number.isSafeInteger(steps.valueAsNumber)) throw new Error("请填写有效的追加步数。");
+        void act("restart", { checkpoint: checkpoints.value, steps: steps.valueAsNumber, ...readResources() });
+      } catch (error) {
+        setStatus(jobStatus, error.message, true);
+      }
+    });
+    for (const target of [panel, section]) {
+      target.addEventListener("toggle", () => {
+        if (visible() && jobs.value) void loadJob();
+        else clearTimeout(timer);
+      }, { signal });
+    }
+    document.addEventListener("visibilitychange", schedule, { signal });
+    signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+
+    return data => {
+      writable = data.enabled && !data.recovery && !form.hidden;
+      syncCreate();
+      const selectedId = jobs.value;
+      records = new Map(Array.from(data.records).filter(([, record]) =>
+        record.spec.mode === "slurm-md" && ["submitting", "unknown", "submitted"].includes(record.state)));
+      queue.hidden = !writable && !records.size;
+      section.hidden = form.hidden && queue.hidden;
+      jobs.replaceChildren(new Option("选择作业", ""), ...Array.from(records.values(), record =>
+        new Option(`${record.job_id ? "Slurm " + record.job_id : "等待回执"} · ${record.id}`, record.id)));
+      if (records.has(selectedId)) {
+        jobs.value = selectedId;
+      } else {
+        ++revision;
+        clearTimeout(timer);
+        current = undefined;
+        fresh = false;
+        setStatus(jobStatus, records.size ? "" : "暂无已确认的 LAMMPS 调度计划。");
+      }
+      renderJob();
+    };
   }
 
   function mountWorkspace(panel, workbench, request, signal) {
@@ -1258,8 +1624,9 @@ function renderMdAnalysis(run, target) {
         handoffSubmit.disabled = false;
       }
     });
-    mountMdJob(find, signal);
-    const refreshPlans = mountPlans(find, panel, request, signal);
+    let updateMdPlans = () => {};
+    const { refreshPlans, selectPlan } = mountPlans(find, panel, request, signal, data => updateMdPlans(data));
+    updateMdPlans = mountMdJob(find, panel, request, signal, selectPlan, refreshPlans);
     const form = find("#analysis-form");
     const fields = form.elements;
     const results = find("#analysis-results");

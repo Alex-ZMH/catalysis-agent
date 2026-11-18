@@ -128,3 +128,11 @@
 #studio .ca-md-primary { margin:12px 0; }
 #studio .ca-md-primary .ca-md-chart { max-width:950px; }
 @media(max-width:900px) { #studio .ca-md-charts {grid-template-columns:1fr;} }
+
+#studio .ca-md-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 10px; }
+#studio .ca-panel .ca-md-actions button { margin-top: 0; }
+#studio .ca-md-queue { padding-inline: 12px; padding-bottom: 12px; background: var(--wb-panel); border-radius: 6px; }
+#studio .ca-md-queue h3 { margin: 0; }
+#studio .ca-md-queue label { max-width: 42rem; }
+#studio .ca-md-progress { border-inline-start: 2px solid var(--wb-accent); padding-inline-start: 10px; font-variant-numeric: tabular-nums; }
+#studio #md-slurm-cancel:not(:disabled) { color: #ffc497; }
