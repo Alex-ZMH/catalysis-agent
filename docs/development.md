@@ -45,3 +45,5 @@ V100 上的后续开发使用 `~/projects/catalysis-agent/repositories/catalysis
 A7 的项目备份、独立恢复、只读历史审批核对及科学复算已在 V100 完成合成项目验收。恢复副本使用原项目名，科学复算另写空目录。操作命令见 [A7 项目备份、恢复与复算](file-analysis.md#a7-项目备份恢复与复算)，验收批次见[验收表](acceptance.md)。
 
 A1 已在 V100 完成双账号和双合成项目隔离验收。受管工作台按项目角色授权，审计文件和 A7 归档留在项目树外。部署规则见[内网账号、项目权限和审计](file-analysis.md#a1-内网账号项目权限和审计)。
+
+DFT → MD 结构交接已接到 VASP 分析结果和独立上传表单。V100 作业 `1032` 在 Firefox 分别导出了 VASP 吸附构型和 CONTCAR，测试版为 `c76a7a8`。两份结构包保存在 `/home/v100/projects/catalysis-agent/jobs/dft-md/20261118-handoff-01/results/`。在线分析直接发布数值，配置阈值与可选参考差异随结果记录。
