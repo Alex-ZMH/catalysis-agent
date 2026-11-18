@@ -34,12 +34,29 @@
     return node;
   }
 
+  function setStatus(node, message, error = false) {
+    node.textContent = message;
+    node.classList.toggle("ca-warning", error);
+  }
+
+  let projectPrefix = "";
+
+  function projectPath(path) {
+    if (!projectPrefix || !path.startsWith("/api/")) return path;
+    if (path.startsWith("/api/projects/")) {
+      if (!path.startsWith(projectPrefix + "/")) throw new Error("下载链接不属于当前项目。");
+      return path;
+    }
+    return projectPrefix + path.slice(4);
+  }
+
   function downloadLink(url, label) {
     const link = element("a", label);
     try {
       if (!url) return link;
       const target = new URL(url, location.href);
       if (target.origin === location.origin && /^https?:$/.test(target.protocol)) {
+        target.pathname = projectPath(target.pathname);
         link.href = target.href;
         link.download = "";
       }
@@ -59,14 +76,18 @@
     return value;
   }
 
-  async function request(path, body, kind, headers) {
-    const response = await fetch(path, body ? { method: "POST", body, headers } : {});
+  async function request(path, body, kind, headers, signal) {
+    const options = { mode: "same-origin", cache: "no-store", signal };
+    const response = await fetch(path, body ? { ...options, method: "POST", body, headers } : options);
+    if (response.ok && (path === "/api/login" || path === "/api/logout")) return;
     const payload = kind === "md"
       ? response.text().then(source => JSON.parse(source, preserveIdentifier))
       : response.json();
     const data = await payload.catch(() => null);
     if (!response.ok || !data) {
-      throw new Error(data?.error || `服务返回异常响应（HTTP ${response.status}）`);
+      const error = new Error(data?.error || `服务返回异常响应（HTTP ${response.status}）`);
+      error.status = response.status;
+      throw error;
     }
     return data;
   }
@@ -388,7 +409,7 @@
   }
 
 
-  function mountPlans(find, panel, setStatus) {
+  function mountPlans(find, panel, request, signal) {
     const stateLabels = { pending: "待人工确认", confirmed: "已确认计划", retryable: "提交前检查失败，可重试",
       submitting: "已受理确认，等待调度回执", unknown: "提交结果待核对", submitted: "已关联 Slurm 作业" };
     const workflows = { adsorption: "vasp-relaxation", md: "md-simulation", equipment: "equipment-simulation" };
@@ -451,7 +472,7 @@
       const receipt = find("#a7-receipt");
       receipt.hidden = !receiptPlans.has(record?.id);
       if (receipt.hidden) receipt.removeAttribute("href");
-      else receipt.href = `/api/plans/${encodeURIComponent(record.id)}/receipt`;
+      else receipt.href = projectPath(`/api/plans/${encodeURIComponent(record.id)}/receipt`);
       const schedulerUnavailable = record?.spec.mode === "slurm-synthetic" && !syntheticSubmission;
       for (const button of [confirm, retry, reconcile]) button.disabled = !!recovery || busy || !ready || schedulerUnavailable;
       if (!record) return;
@@ -544,7 +565,7 @@
     plans.addEventListener("change", renderPlan);
     refresh.addEventListener("click", refreshPlans);
     find("#analysis-refresh").addEventListener("click", refreshPlans);
-    panel.addEventListener("toggle", () => { if (panel.open) void refreshPlans(); });
+    panel.addEventListener("toggle", () => { if (panel.open) void refreshPlans(); }, { signal });
     form.addEventListener("submit", event => {
       event.preventDefault();
       if (create.disabled || !form.reportValidity()) return;
@@ -575,7 +596,7 @@
     return refreshPlans;
   }
 
-  function mount() {
+  async function mount() {
     const content = document.querySelector("#studio .wb-content");
     if (!content || document.querySelector("#analysis-panel")) return;
     const panel = element("details", null, "ca-panel");
@@ -583,6 +604,23 @@
     // Only static interface markup is assigned here. API data is rendered as text.
     panel.innerHTML = `
       <summary id="analysis-panel-toggle">科学分析与晶胞工具</summary>
+      <section id="a1-session" aria-label="项目访问">
+        <form id="a1-login" method="post" hidden>
+          <h2>登录工作台</h2>
+          <div class="ca-grid">
+            <label>用户名<input id="a1-username" name="username" autocomplete="username" required></label>
+            <label>密码<input id="a1-password" name="password" type="password" autocomplete="current-password" required></label>
+          </div>
+          <button id="a1-login-submit" class="ca-primary" type="submit">登录</button>
+        </form>
+        <div class="ca-heading">
+          <label id="a1-project-controls" hidden>当前项目<select id="a1-project"></select></label>
+          <span id="a1-actor"></span>
+          <button id="a1-logout" type="button" hidden>退出登录</button>
+        </div>
+        <p id="a1-status" role="status">正在读取会话…</p>
+      </section>
+      <div id="a1-workspace" hidden>
       <nav class="ca-guides" aria-label="科学分析指南">
         <a href="/guide/vasp" target="_blank" rel="noopener">VASP 吸附指南</a>
         <a href="/guide/kinetics" target="_blank" rel="noopener">动力学指南</a>
@@ -751,11 +789,15 @@
           <p id="cell-status" role="status"></p>
         </form>
         <section id="cell-results" aria-label="晶胞检查结果" hidden></section>
-      </details>`;
+      </details>
+      <section id="a1-backups" aria-labelledby="a1-backup-title" hidden>
+        <div class="ca-heading"><h2 id="a1-backup-title">项目备份</h2><button id="a1-backup-refresh" type="button">刷新备份</button></div>
+        <p id="a1-backup-status" role="status"></p>
+        <ul id="a1-backup-list"></ul>
+      </section>
+      </div>`;
     content.append(panel);
 
-    const find = selector => panel.querySelector(selector);
-    const refreshPlans = mountPlans(find, panel, setStatus);
     const header = content.closest(".wb-main").querySelector(".wb-header");
     if (header) {
       const nav = element("button", "科学分析");
@@ -765,12 +807,166 @@
       nav.setAttribute("aria-expanded", "false");
       nav.addEventListener("click", () => {
         panel.open = true;
-        find("#analysis-panel-toggle").focus({ preventScroll: true });
+        panel.querySelector("#analysis-panel-toggle").focus({ preventScroll: true });
         panel.scrollIntoView({ block: "start" });
       });
       panel.addEventListener("toggle", () => nav.setAttribute("aria-expanded", String(panel.open)));
       header.append(nav);
     }
+
+    const find = selector => panel.querySelector(selector);
+    const controls = find("#a1-session");
+    const login = find("#a1-login");
+    const logout = find("#a1-logout");
+    const picker = find("#a1-project");
+    const status = find("#a1-status");
+    const workbench = find("#a1-workspace");
+    const controller = new AbortController();
+    const jsonHeaders = { "Content-Type": "application/json" };
+    const page = new URL(location.href);
+    let pending = false;
+
+    function clearProject() {
+      controller.abort();
+      const poscar = find("#cell-form")?.dataset.poscarUrl;
+      if (poscar) URL.revokeObjectURL(poscar);
+      workbench.remove();
+      find("#a1-project-controls").hidden = true;
+    }
+
+    login.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (pending) return;
+      const button = find("#a1-login-submit");
+      const password = find("#a1-password");
+      const body = JSON.stringify({ username: find("#a1-username").value, password: password.value });
+      pending = button.disabled = true;
+      password.value = "";
+      setStatus(status, "正在登录…");
+      try {
+        await request("/api/login", body, undefined, jsonHeaders);
+        location.reload();
+      } catch (error) {
+        pending = button.disabled = false;
+        setStatus(status, `登录失败：${error.message}`, true);
+        password.focus();
+      }
+    });
+
+    logout.addEventListener("click", async () => {
+      if (pending) return;
+      pending = logout.disabled = true;
+      clearProject();
+      setStatus(status, "正在退出登录…");
+      try {
+        await request("/api/logout", "{}", undefined, jsonHeaders);
+        page.searchParams.delete("project");
+        location.replace(page.href);
+      } catch (error) {
+        pending = logout.disabled = false;
+        setStatus(status, `退出失败，请重试：${error.message}`, true);
+      }
+    });
+
+    let session;
+    try {
+      session = await request("/api/session");
+    } catch (error) {
+      // Legacy servers predating sessions retain their direct API routes.
+      if (error.status !== 404) {
+        setStatus(status, `读取会话失败：${error.message}`, true);
+        return;
+      }
+      session = { managed: false };
+    }
+    if (session.managed === false) {
+      controls.hidden = true;
+      workbench.hidden = false;
+      mountWorkspace(panel, workbench, request);
+      return;
+    }
+    if (session.managed !== true) {
+      setStatus(status, "无法识别服务的会话模式。", true);
+      return;
+    }
+    window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });
+    window.addEventListener("pagehide", clearProject, { once: true });
+    setStatus(status, "");
+    if (!session.actor) {
+      login.hidden = false;
+      return;
+    }
+    logout.hidden = false;
+    const actor = typeof session.actor === "string" ? session.actor : session.actor.username ?? session.actor.id;
+    find("#a1-actor").textContent = actor ?? "";
+    const projects = Object.entries(session.projects ?? {}).filter(([id]) => /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/.test(id));
+    if (!projects.length) {
+      setStatus(status, "当前账号没有可用项目。");
+      return;
+    }
+    const allowed = new Map(projects);
+    const requested = page.searchParams.get("project");
+    const project = allowed.has(requested) ? requested : projects[0][0];
+    picker.replaceChildren(...projects.map(([id, role]) => new Option(`${id} · ${role}`, id)));
+    picker.value = project;
+    find("#a1-project-controls").hidden = false;
+    if (requested && !allowed.has(requested)) {
+      setStatus(status, `所选项目不可用，已打开 ${project}。`);
+    }
+    picker.addEventListener("change", () => {
+      if (pending || !allowed.has(picker.value) || picker.value === project) return;
+      pending = true;
+      const next = picker.value;
+      clearProject();
+      page.searchParams.set("project", next);
+      location.assign(page.href);
+    });
+
+    projectPrefix = `/api/projects/${encodeURIComponent(project)}`;
+    const projectRequest = async (path, body, kind, headers) => {
+      controller.signal.throwIfAborted();
+      const data = await request(projectPath(path), body, kind, headers, controller.signal);
+      controller.signal.throwIfAborted();
+      return data;
+    };
+    workbench.hidden = false;
+    mountWorkspace(panel, workbench, projectRequest, controller.signal);
+    if (allowed.get(project) === "admin") {
+      const backups = find("#a1-backups");
+      const refresh = find("#a1-backup-refresh");
+      const list = find("#a1-backup-list");
+      const message = find("#a1-backup-status");
+      backups.hidden = false;
+      const loadBackups = async () => {
+        if (refresh.disabled || controller.signal.aborted) return;
+        refresh.disabled = true;
+        list.replaceChildren();
+        setStatus(message, "正在读取项目备份…");
+        try {
+          const { backups } = await projectRequest("/api/backups");
+          for (const backup of backups) {
+            const item = element("li");
+            const link = downloadLink(`/api/backups/${encodeURIComponent(backup.id)}`, backup.id);
+            link.dataset.backupId = backup.id;
+            item.append(link, element("small", `${backup.size_bytes} 字节`));
+            list.append(item);
+          }
+          setStatus(message, backups.length ? "" : "暂无项目备份。");
+        } catch (error) {
+          setStatus(message, `读取备份失败：${error.message}`, true);
+        } finally {
+          refresh.disabled = false;
+        }
+      };
+      refresh.addEventListener("click", loadBackups);
+      panel.addEventListener("toggle", () => { if (panel.open) void loadBackups(); }, { signal: controller.signal });
+      if (panel.open) void loadBackups();
+    }
+  }
+
+  function mountWorkspace(panel, workbench, request, signal) {
+    const find = selector => workbench.querySelector(selector);
+    const refreshPlans = mountPlans(find, panel, request, signal);
     const form = find("#analysis-form");
     const fields = form.elements;
     const results = find("#analysis-results");
@@ -785,11 +981,6 @@
     let activeKind = fields.kind.value;
     let viewVersion = 0;
     let manifestVersion = 0;
-
-    function setStatus(node, message, error = false) {
-      node.textContent = message;
-      node.classList.toggle("ca-warning", error);
-    }
 
     function syncModel() {
       const model = fields.model.value;
@@ -986,8 +1177,9 @@
     upload.addEventListener("change", syncSheet);
     syncModel();
     syncKind();
-    panel.addEventListener("toggle", () => { if (panel.open) void loadHistory(); });
+    panel.addEventListener("toggle", () => { if (panel.open) void loadHistory(); }, { signal });
     find("#analysis-refresh").addEventListener("click", loadHistory);
+    if (panel.open) void loadHistory();
     form.addEventListener("submit", async event => {
       event.preventDefault();
       const submit = find("#analysis-submit");

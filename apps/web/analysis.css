@@ -115,3 +115,7 @@
 
 #studio .ca-a6-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
 #studio #a6-events { margin-block: 8px; padding-inline-start: 24px; }
+
+#studio #a1-session form { margin-top: 0; padding-top: 0; border: 0; }
+#studio #a1-project-controls { min-width: min(14rem, 100%); }
+#studio #a1-backup-list { padding-inline-start: 24px; }

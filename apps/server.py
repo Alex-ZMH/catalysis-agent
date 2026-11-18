@@ -1,5 +1,6 @@
 """Loopback workbench with an explicitly enabled synthetic Slurm submission profile."""
 import argparse
+from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -7,16 +8,21 @@ import io
 import json
 import mimetypes
 import os
+from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import threading
 from urllib.parse import quote, urlsplit
+from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
 from jsonschema import ValidationError
 from packages.agent.approvals import ApprovalStore, RestoredApprovalError
+from packages.agent.egress import restrict_egress
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import Workspace, json_bytes
 from scripts.frontend_baseline import git as baseline_git, verify as verify_baseline
@@ -76,6 +82,39 @@ PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
               "equipment-simulation": "equipment"}
 
 
+RUN_PATH = re.compile(r"/api/runs/(run-[0-9a-f]{64})(?:/(manifest|artifacts/(art-[0-9a-f]{64})))?")
+PROJECT_PATH = re.compile(r"/api/projects/([a-zA-Z0-9][a-zA-Z0-9_-]{0,95})(/.*)")
+RECEIPT_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/receipt")
+BACKUP_PATH = re.compile(r"/api/backups/([0-9a-f]{64})")
+COOKIE_NAME = "catalysis_session"
+ACTIONS = {
+    (False, "/api/runs"): "project.runs.list",
+    (False, "/api/plans"): "project.plans.list",
+    (False, "/api/backups"): "project.backups.list",
+    (True, "/api/runs"): "project.run.create",
+    (True, "/api/cell"): "project.cell.check",
+    (True, "/api/plans"): "project.plan.create",
+}
+
+
+def access_action(path, post):
+    if (post, path) in ACTIONS:
+        return ACTIONS[post, path], {}
+    if not post and (run := RUN_PATH.fullmatch(path)):
+        run_id, suffix, artifact_id = run.groups()
+        ids = {"run_id": run_id}
+        if artifact_id:
+            return "project.artifact.read", {**ids, "artifact_id": artifact_id}
+        return "project.manifest.read" if suffix else "project.run.read", ids
+    if (plan := PLAN_PATH.fullmatch(path)) and post == bool(plan[2]):
+        return "project.plan." + (plan[2] or "read"), {"plan_id": plan[1]}
+    if not post and (receipt := RECEIPT_PATH.fullmatch(path)):
+        return "project.plan.receipt", {"plan_id": receipt[1]}
+    if not post and (backup := BACKUP_PATH.fullmatch(path)):
+        return "project.backup.read", {"backup_id": backup[1]}
+    return "project.route", {}
+
+
 def plan_spec(store, body, synthetic_submission):
     if set(body) != {"run_id", "workflow", "cpus", "gpus", "minutes"}:
         raise ValueError("请提供来源运行、工作流、CPU 数量、GPU 数量和时限。")
@@ -104,9 +143,31 @@ class Handler(BaseHTTPRequestHandler):
         pass  # User file names, study parameters and requests are not written to access logs.
 
     def _send(self, status, data, mime="application/json; charset=utf-8", filename=None):
+        if self._headers(status, len(data), mime, filename):
+            self.wfile.write(data)
+
+    def _headers(self, status, size, mime, filename=None):
+        event = getattr(self, "audit_event", None)
+        if event is not None:
+            try:
+                outcome = "allowed" if status < 400 else "denied" if status < 500 else "error"
+                self.server.audit.record(dict(event, outcome=outcome, status=status))
+            except (OSError, ValueError):
+                message = json_bytes({"error": "访问审计暂不可用。"})
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(message)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(message)
+                return False
         self.send_response(status)
+        if event is not None:
+            self.send_header("X-Request-ID", event["request_id"])
+        if getattr(self, "session_cookie", None):
+            self.send_header("Set-Cookie", self.session_cookie)
         self.send_header("Content-Type", mime)
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(size))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -117,9 +178,15 @@ class Handler(BaseHTTPRequestHandler):
             filename = filename.replace("\\", "/").split("/")[-1]
             self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(filename, safe=""))
         self.end_headers()
-        self.wfile.write(data)
+        return True
 
     def _request(self, post):
+        path = urlsplit(self.path).path
+        managed = self.server.access is not None
+        self.audit_event = self.session_cookie = None
+        if managed and (path == "/api" or path.startswith("/api/")):
+            self.audit_event = dict(time=datetime.now(timezone.utc).isoformat(),
+                                    request_id=uuid4().hex, actor=None, project=None, action="request")
         port = self.server.server_port
         origins = {f"{host}:{port}" for host in ("localhost", "127.0.0.1")}
         if port == 80:
@@ -130,8 +197,26 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get("Sec-Fetch-Site") == "cross-site"):
             self._send(403, json_bytes({"error": "仅接受本机同源访问。"}))
             return
-        path = urlsplit(self.path).path
         try:
+            if path == "/api/session" and not managed and not post:
+                self._send(200, json_bytes({"managed": False, "actor": None, "projects": {}}))
+                return
+            if managed and getattr(self, "audit_event", None) is not None:
+                path = self._managed(path, post)
+                if path is None:
+                    return
+            if managed and path.startswith("/api/"):
+                assert_project_layout(self.server.data_dir, self.audit_event["project"])
+                self.workspace, self.approvals, self.receipts = project_state(
+                    self.server.data_dir, self.audit_event["project"],
+                    self.audit_event["actor"], self.server.commit, False
+                )
+                self.synthetic_submission = False
+            else:
+                self.workspace = self.server.workspace
+                self.approvals = self.server.approvals
+                self.receipts = self.server.slurm_receipts
+                self.synthetic_submission = self.server.synthetic_submission
             if post:
                 self._post(path)
             else:
@@ -151,6 +236,107 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Workbench internal error ({type(error).__name__})", file=sys.stderr)
             self._send(500, json_bytes({"error": "本次操作未能完成，请检查文件和本地存储。"}))
 
+    def _token(self):
+        value = self.headers.get("Cookie", "")
+        if len(value) > 4096:
+            return None
+        try:
+            cookie = SimpleCookie(value).get(COOKIE_NAME)
+        except CookieError:
+            return None
+        return cookie.value if cookie else None
+
+    def _managed(self, path, post):
+        access = self.server.access
+        token = self._token()
+        actor = access.actor(token) if token else None
+        self.audit_event["actor"] = actor
+        action = {"/api/session": "session.read", "/api/login": "session.login",
+                  "/api/logout": "session.logout"}.get(path)
+        scoped = PROJECT_PATH.fullmatch(path)
+        if scoped:
+            project, suffix = scoped.groups()
+            action, ids = access_action("/api" + suffix, post)
+            self.audit_event.update(project=project, **ids)
+        self.audit_event["action"] = action or "project.unscoped"
+        if post and self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+            self._send(403, json_bytes({"error": "请从同源工作台提交请求。"}))
+            return None
+        if path == "/api/session" and not post:
+            self._session(actor)
+            return None
+        if path in {"/api/login", "/api/logout"} and post:
+            self._session_action(path, actor, token)
+            return None
+        if not actor:
+            self._send(401, json_bytes({"error": "请先登录项目工作台。"}))
+            return None
+        if not scoped or not (role := access.projects(actor).get(project)):
+            self._send(403, json_bytes({"error": "此账号没有访问该项目的权限。"}))
+            return None
+        if (post and role == "viewer") or (suffix.startswith("/backups") and role != "admin"):
+            self._send(403, json_bytes({"error": "当前项目角色不允许此操作。"}))
+            return None
+        return "/api" + suffix
+
+    def _session(self, actor):
+        self._send(200, json_bytes({"managed": True, "actor": actor,
+                                    "projects": self.server.access.projects(actor) if actor else {}}))
+
+    def _session_action(self, path, actor, token):
+        body = self._json_body()
+        flags = "; Path=/; HttpOnly; SameSite=Strict"
+        access = self.server.access
+        if path == "/api/logout":
+            if body:
+                raise ValueError("退出请求不接受额外参数。")
+            if token:
+                access.logout(token)
+            self.session_cookie = COOKIE_NAME + "=; Max-Age=0" + flags
+            self._session(None)
+            return
+        if (set(body) != {"username", "password"}
+                or not all(isinstance(value, str) for value in body.values())):
+            raise ValueError("请提供账号和密码。")
+        from packages.agent.access import RateLimitError
+        try:
+            new_token = access.login(body["username"], body["password"])
+        except RateLimitError:
+            self._send(429, json_bytes({"error": "登录尝试过于频繁，请稍后再试。"}))
+            return
+        if new_token is None:
+            self._send(401, json_bytes({"error": "账号或密码无效，或尝试过于频繁。"}))
+            return
+        if token:
+            access.logout(token)
+        actor = access.actor(new_token)
+        self.audit_event["actor"] = actor
+        self.session_cookie = COOKIE_NAME + "=" + new_token + flags
+        self._session(actor)
+
+    def _json_body(self):
+        if self.headers.get_content_type() != "application/json":
+            raise ValueError("请求需要 JSON。")
+        size = int(self.headers.get("Content-Length", "-1"))
+        if self.headers.get("Transfer-Encoding") or not 0 < size <= 8192:
+            raise ValueError("JSON 请求须在 8 KiB 内。")
+        self.connection.settimeout(15)
+        data = self.rfile.read(size)
+        if len(data) != size:
+            raise ValueError("JSON 请求未接收完整。")
+        body = json.loads(data)
+        if not isinstance(body, dict):
+            raise ValueError("请求需要 JSON 对象。")
+        return body
+
+    def _run_view(self, view):
+        if self.server.access is not None:
+            prefix = "/api/projects/" + self.audit_event["project"]
+            view["manifest_url"] = prefix + view["manifest_url"][4:]
+            for artifact in view["artifacts"]:
+                artifact["url"] = prefix + artifact["url"][4:]
+        return view
+
     def _get(self, path):
         if path in self.server.assets:
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
@@ -164,38 +350,49 @@ class Handler(BaseHTTPRequestHandler):
         if path in guides:
             self._send(200, (ROOT / "docs" / guides[path]).read_bytes(), "text/plain; charset=utf-8")
             return
-        store = self.server.workspace
+        store = self.workspace
+        if self.server.access is not None:
+            project = self.audit_event["project"]
+            if path == "/api/backups":
+                self._send(200, json_bytes({"backups": self.server.backups.list(project)}))
+                return
+            if backup := BACKUP_PATH.fullmatch(path):
+                stream, size = self.server.backups.open(project, backup[1])
+                with stream:
+                    if self._headers(200, size, "application/zip", backup[1] + ".zip"):
+                        shutil.copyfileobj(stream, self.wfile, length=1024 * 1024)
+                return
         if path == "/api/plans":
-            approvals = self.server.approvals
+            approvals = self.approvals
             plans = approvals.list()
-            listing = {"plans": plans, "synthetic_submission": self.server.synthetic_submission}
+            listing = {"plans": plans, "synthetic_submission": self.synthetic_submission}
             if approvals.recovery:
                 listing["recovery"] = approvals.recovery
                 listing["receipt_plan_ids"] = [
                     plan["id"] for plan in plans
                     if plan["job_id"] and plan["spec"]["workflow"] == "synthetic-v100"
-                    and self.server.slurm_receipts.result_path(plan).is_file()
+                    and self.receipts.result_path(plan).is_file()
                 ]
             self._send(200, json_bytes(listing))
             return
-        receipt = re.fullmatch(r"/api/plans/(plan-[0-9a-f]{64})/receipt", path)
+        receipt = RECEIPT_PATH.fullmatch(path)
         if receipt:
-            plan = self.server.approvals.get(receipt[1])
+            plan = self.approvals.get(receipt[1])
             if plan["spec"]["workflow"] != "synthetic-v100" or not plan["job_id"]:
                 raise FileNotFoundError()
-            filename, data = self.server.slurm_receipts.result_receipt(
-                plan, archived=self.server.approvals.recovery is not None
+            filename, data = self.receipts.result_receipt(
+                plan, archived=self.approvals.recovery is not None
             )
             self._send(200, data, filename=filename)
             return
         plan = PLAN_PATH.fullmatch(path)
         if plan and plan[2] is None:
-            self._send(200, json_bytes(self.server.approvals.get(plan[1])))
+            self._send(200, json_bytes(self.approvals.get(plan[1])))
             return
         if path == "/api/runs":
             self._send(200, json_bytes({"runs": store.recent()}))
             return
-        match = re.fullmatch(r"/api/runs/(run-[0-9a-f]{64})(?:/(manifest|artifacts/(art-[0-9a-f]{64})))?", path)
+        match = RUN_PATH.fullmatch(path)
         if not match:
             raise FileNotFoundError()
         run, suffix, artifact = match.groups()
@@ -205,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
         elif suffix:
             self._send(200, json_bytes(store.manifest(run)), filename="manifest.json")
         else:
-            self._send(200, json_bytes(store.detail(run)))
+            self._send(200, json_bytes(self._run_view(store.detail(run))))
 
     def _plan_action(self, path):
         match = PLAN_PATH.fullmatch(path)
@@ -228,12 +425,11 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(data)
         if not isinstance(body, dict):
             raise ValueError("计划请求需要 JSON 对象。")
-        approvals = self.server.approvals
+        approvals = self.approvals
         if path == "/api/plans":
             if approvals.recovery:
                 raise RestoredApprovalError("恢复副本中的审批记录仅供核对。")
-            record = approvals.create(plan_spec(self.server.workspace, body,
-                                                self.server.synthetic_submission))
+            record = approvals.create(plan_spec(self.workspace, body, self.synthetic_submission))
         elif match[2] == "confirm":
             if set(body) != {"digest", "confirmed"} or body["confirmed"] is not True:
                 raise ValueError("需要对当前计划摘要进行人工确认。")
@@ -272,8 +468,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("晶胞预检只接收一个 POSCAR。")
                 result = plan_from_poscar(blob, fields["options"])
             else:
-                result = self.server.workspace.analyze(fields.get("kind"), name, blob, fields["options"],
-                                                       fields.get("origin"), fields.get("reference"))
+                result = self._run_view(self.workspace.analyze(
+                    fields.get("kind"), name, blob, fields["options"],
+                    fields.get("origin"), fields.get("reference")
+                ))
             self._send(200, json_bytes(result))
         finally:
             self.server.analysis_slots.release()
@@ -285,19 +483,79 @@ class Handler(BaseHTTPRequestHandler):
         self._request(True)
 
 
-def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2, synthetic_submission=False):
+def assert_project_layout(data_dir, project):
+    projects = data_dir / "projects"
+    root = projects / project
+    for path in (projects, root, root / "raw", root / "runs", root / "approvals",
+                 root / "approvals" / "approvals.sqlite3"):
+        if path.is_symlink():
+            raise ValueError("项目数据目录配置不安全。")
+
+
+def mark_managed(data_dir, managed):
+    marker = data_dir / ".managed-access"
+    if not managed:
+        if marker.exists() or marker.is_symlink():
+            raise ValueError("This data root requires managed project access")
+        return
+    if data_dir.is_symlink() or any((path / ".git").exists() for path in (data_dir, *data_dir.parents)):
+        raise ValueError("Managed data needs a real directory outside Git")
+    data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = data_dir.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError("Managed data root must be private to the service OS account (0700)")
+    try:
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        if marker.is_symlink() or not marker.is_file():
+            raise ValueError("Invalid managed data marker")
+    else:
+        with os.fdopen(fd, "w") as stream:
+            stream.write("managed-v1\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
+def project_state(data_dir, project, operator, commit, submit):
+    store = Workspace(data_dir, project, operator, commit)
+    receipts = SyntheticSlurm(store.runs.parent / "approvals" / "slurm")
+    return store, ApprovalStore(data_dir, project, operator, receipts if submit else None), receipts
+
+
+def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
+                synthetic_submission=False, *, access_policy=None, audit_log=None, backup_root=None):
     if min(max_upload_mib, workers) <= 0:
         raise ValueError("Limits must be positive")
+    data_dir = Path(data_dir).expanduser().absolute()
+    managed = access_policy is not None
+    if managed != (audit_log is not None) or managed != (backup_root is not None):
+        raise ValueError("Managed mode requires --access-policy, --audit-log and --backup-root together")
+    if managed and synthetic_submission:
+        raise ValueError("Managed mode supports manual confirmation of plans only")
+    access = audit = backups = None
+    if managed:
+        from packages.agent.access import AccessPolicy, AuditLog
+        from packages.agent.project_backups import ProjectBackups
+
+        managed_paths = [Path(path).expanduser().absolute()
+                         for path in (access_policy, audit_log, backup_root)]
+        projects_root = (data_dir / "projects").resolve()
+        if any(path.resolve().is_relative_to(projects_root) for path in managed_paths):
+            raise ValueError("Keep policy, audit and archive data outside the project tree")
+        if len({path.resolve() for path in managed_paths}) != len(managed_paths):
+            raise ValueError("Use separate locations for policy, audit and archive data")
+        access, audit, backups = AccessPolicy(managed_paths[0]), AuditLog(managed_paths[1]), ProjectBackups(managed_paths[2])
+    mark_managed(data_dir, managed)
     assets = static_files()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    store = Workspace(data_dir, project, operator, commit)
-    approvals_dir = store.runs.parent / "approvals"
-    receipt_reader = SyntheticSlurm(approvals_dir / "slurm")
-    approvals = ApprovalStore(data_dir, project, operator, receipt_reader if synthetic_submission else None)
+    store, approvals, receipts = (None, None, None) if managed else project_state(
+        data_dir, project, operator, commit, synthetic_submission
+    )
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.slurm_receipts = receipt_reader
-    server.approvals = approvals
-    server.synthetic_submission = approvals.scheduler is not None
+    server.access, server.audit, server.backups = access, audit, backups
+    server.data_dir, server.commit = data_dir, commit
+    server.slurm_receipts, server.approvals = receipts, approvals
+    server.synthetic_submission = approvals is not None and approvals.scheduler is not None
     server.workspace, server.assets = store, assets
     server.upload_limit = max_upload_mib * 1024 * 1024
     server.analysis_slots = threading.BoundedSemaphore(workers)
@@ -315,9 +573,18 @@ def main():
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--a6-synthetic-slurm", action="store_true",
                         help="Enable human-confirmed short synthetic jobs on the V100 GPU partition")
+    parser.add_argument("--access-policy", type=Path)
+    parser.add_argument("--audit-log", type=Path)
+    parser.add_argument("--backup-root", type=Path)
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
-                     args.max_upload_mib, args.workers, args.a6_synthetic_slurm) as server:
+                     args.max_upload_mib, args.workers, args.a6_synthetic_slurm,
+                     access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root) as server:
+        if server.access is not None:
+            restrict_egress()
+            server.audit.record(dict(time=datetime.now(timezone.utc).isoformat(),
+                                     request_id=uuid4().hex, actor=None, project=None,
+                                     action="service.start", outcome="allowed", status=200))
         print(f"http://127.0.0.1:{server.server_port}/#studio", flush=True)
         try:
             server.serve_forever()
