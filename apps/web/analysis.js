@@ -797,6 +797,10 @@
       </section>
       </div>`;
     content.append(panel);
+    if (sessionStorage.getItem("catalysis-reopen-analysis") === "1") {
+      sessionStorage.removeItem("catalysis-reopen-analysis");
+      panel.open = true;
+    }
 
     const header = content.closest(".wb-main").querySelector(".wb-header");
     if (header) {
@@ -845,6 +849,7 @@
       setStatus(status, "正在登录…");
       try {
         await request("/api/login", body, undefined, jsonHeaders);
+        sessionStorage.setItem("catalysis-reopen-analysis", "1");
         location.reload();
       } catch (error) {
         pending = button.disabled = false;
@@ -861,7 +866,9 @@
       try {
         await request("/api/logout", "{}", undefined, jsonHeaders);
         page.searchParams.delete("project");
-        location.replace(page.href);
+        sessionStorage.setItem("catalysis-reopen-analysis", "1");
+        history.replaceState(history.state, "", page.href);
+        location.reload();
       } catch (error) {
         pending = logout.disabled = false;
         setStatus(status, `退出失败，请重试：${error.message}`, true);
@@ -919,6 +926,7 @@
       const next = picker.value;
       clearProject();
       page.searchParams.set("project", next);
+      sessionStorage.setItem("catalysis-reopen-analysis", "1");
       location.assign(page.href);
     });
 
