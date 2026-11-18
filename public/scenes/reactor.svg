@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400" role="img" aria-labelledby="title desc">
+<title id="title">Stirred reactor cross-section</title>
+<desc id="desc">A jacketed stirred vessel with axial circulation, warmer reacting fluid and a cooler jacket stream. Qualitative schematic.</desc>
+<defs><linearGradient id="bg" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#101f3b"/><stop offset="1" stop-color="#080f21"/></linearGradient>
+<pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#799bc5" stroke-opacity=".09"/></pattern>
+<marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#57dbf3"/></marker>
+<marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#ff9c69"/></marker>
+<marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#a0f4cb"/></marker>
+<marker id="v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#ad9dff"/></marker>
+<linearGradient id="thermal"><stop stop-color="#146078"/><stop offset=".48" stop-color="#243353"/><stop offset="1" stop-color="#8a453f"/></linearGradient>
+<linearGradient id="vertical" x2="0%" y2="100%"><stop stop-color="#155169"/><stop offset=".48" stop-color="#76464e"/><stop offset="1" stop-color="#25304c"/></linearGradient>
+<radialGradient id="gain"><stop stop-color="#68edff" stop-opacity=".85"/><stop offset="1" stop-color="#279bc5" stop-opacity=".22"/></radialGradient>
+<radialGradient id="loss"><stop stop-color="#ffbb8c" stop-opacity=".85"/><stop offset="1" stop-color="#f77263" stop-opacity=".22"/></radialGradient></defs>
+<rect width="800" height="400" fill="url(#bg)"/>
+<rect x="24" y="83" width="752" height="261" rx="16" fill="url(#grid)" stroke="#2b4264"/>
+<g font-family="Segoe UI, Microsoft YaHei, sans-serif">
+<text x="28" y="52" fill="#eff6ff" font-size="26">搅拌反应釜剖面</text>
+<rect x="634" y="26" width="138" height="36" rx="14" fill="#112742" stroke="#345275"/>
+<text x="703" y="49" fill="#b7d7ee" font-size="11" text-anchor="middle" letter-spacing="2">SCHEMATIC</text>
+
+<path d="M195 142V231Q195 307 271 314H510Q586 307 586 231V142Z" fill="url(#thermal)" stroke="#496485" stroke-width="2"/>
+<path d="M172 158V232Q172 335 272 335H510Q609 335 609 232V158" fill="none" stroke="#496485" stroke-width="16" />
+<path d="M195 142H586M390 100V245M328 243H452" fill="none" stroke="#9cb5d2" stroke-width="4" stroke-linecap="round"/>
+<path d="M328 243l-15 -12m139 12 15 -12" fill="none" stroke="#9cb5d2" stroke-width="4" />
+<path d="M128 172H172V232Q172 316 255 334" fill="none" stroke="#57dbf3" stroke-width="2.5" marker-end="url(#c)"/><path d="M509 335Q609 330 609 232V177H657" fill="none" stroke="#57dbf3" stroke-width="2.5" marker-end="url(#c)"/>
+<path d="M341 251C255 280 218 228 259 191Q296 161 355 190" fill="none" stroke="#ff9c69" stroke-width="2.5" marker-end="url(#h)"/>
+<path d="M442 251C527 280 566 228 525 191Q490 161 427 190" fill="none" stroke="#ff9c69" stroke-width="2.5" marker-end="url(#h)"/>
+<path d="M390 190v43" fill="none" stroke="#ff9c69" stroke-width="2.5" marker-end="url(#h)"/>
+<path d="M248 101v42" fill="none" stroke="#57dbf3" stroke-width="2.5" marker-end="url(#c)"/><text x="209" y="113" fill="#57dbf3" font-size="14">进料</text><text x="407" y="115" fill="#c8d8ec" font-size="14">搅拌桨</text>
+<text x="61" y="197" fill="#57dbf3" font-size="14">夹套入口</text><text x="646" y="159" fill="#57dbf3" font-size="14">夹套出口</text>
+
+<path d="M36 369h27" fill="none" stroke="#57dbf3" stroke-width="2.5" marker-end="url(#c)"/><text x="74" y="374" fill="#c8d8ec" font-size="14">相对冷流</text><path d="M229 369h27" fill="none" stroke="#ff9c69" stroke-width="2.5" marker-end="url(#h)"/><text x="267" y="374" fill="#c8d8ec" font-size="14">相对热流</text><text x="528" y="374" fill="#c8d8ec" font-size="14">色彩表示相对温度</text>
+</g>
+</svg>

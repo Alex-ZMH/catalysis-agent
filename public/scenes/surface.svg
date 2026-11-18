@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400" role="img" aria-labelledby="title desc">
+  <title id="title">固体表面的吸附、反应与解吸</title>
+  <desc id="desc">示意图。反应物先占据固体表面位点，在表面转化为产物，随后解吸并释放位点。</desc>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#12354d"/><stop offset="1" stop-color="#071626"/></linearGradient>
+    <linearGradient id="slab" x2="0" y2="1"><stop stop-color="#2d7690"/><stop offset="1" stop-color="#102c43"/></linearGradient>
+    <radialGradient id="atom" cx=".3" cy=".25" r=".75"><stop stop-color="#e4fbff"/><stop offset=".48" stop-color="#78dceb"/><stop offset="1" stop-color="#28778e"/></radialGradient>
+    <radialGradient id="warm" cx=".3" cy=".25" r=".75"><stop stop-color="#fff1cf"/><stop offset=".5" stop-color="#ffc784"/><stop offset="1" stop-color="#b76643"/></radialGradient>
+    <marker id="tip" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4 0 8Z" fill="#88e3ef"/></marker>
+    <g id="row" fill="url(#atom)"><circle r="7"/><circle cx="25" r="7"/><circle cx="50" r="7"/><circle cx="75" r="7"/><circle cx="100" r="7"/><circle cx="125" r="7"/></g>
+    <g id="surface">
+      <path d="M0 45V73L42 81 181 44V16L42 53Z" fill="url(#slab)" stroke="#4f9eb2"/>
+      <path d="M0 45L139 8 181 16 42 53Z" fill="#20516a" stroke="#80cbd8"/>
+      <path d="M0 59L42 67 181 30M42 53V81" fill="none" stroke="#64b9cc" opacity=".4"/>
+      <use href="#row" transform="translate(13 42) skewY(-15)"/>
+      <use href="#row" transform="translate(34 46) skewY(-15)"/>
+      <ellipse cx="84" cy="32.6" rx="11" ry="9" fill="#ffc784" fill-opacity=".18" stroke="#ffd299"/>
+    </g>
+    <g id="reactant"><path d="M-12 4L0-7 13 3" fill="none" stroke="#d1eff4" stroke-width="5"/><circle cx="-12" cy="4" r="8" fill="url(#atom)"/><circle cy="-7" r="10" fill="url(#warm)"/><circle cx="13" cy="3" r="8" fill="url(#atom)"/></g>
+    <g id="product"><path d="M-14 0H14" stroke="#d1eff4" stroke-width="5"/><circle cx="-14" r="8" fill="url(#atom)"/><circle r="10" fill="url(#warm)"/><circle cx="14" r="8" fill="url(#atom)"/></g>
+  </defs>
+  <rect width="800" height="400" rx="20" fill="url(#bg)"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" fill="#e2f9fd">
+    <text x="32" y="48" font-size="25" font-weight="700">固体表面反应的三个阶段</text>
+    <text x="767" y="44" text-anchor="end" fill="#ffc892" font-size="12" letter-spacing="2">SCHEMATIC</text>
+    <g fill="#0b2539" stroke="#32657b"><rect x="32" y="77" width="228" height="259" rx="12"/><rect x="286" y="77" width="228" height="259" rx="12"/><rect x="540" y="77" width="228" height="259" rx="12"/></g>
+    <g text-anchor="middle" font-size="18" font-weight="700"><text x="146" y="114">反应物吸附</text><text x="400" y="114">表面反应</text><text x="654" y="114">产物解吸</text></g>
+    <use href="#surface" x="62" y="221"/><use href="#surface" x="316" y="221"/><use href="#surface" x="570" y="221"/>
+    <g fill="none" stroke="#88e3ef" stroke-width="1.7" marker-end="url(#tip)">
+      <path d="M146 172V229" stroke-dasharray="4 5"/><path d="M664 222Q694 202 692 171" stroke-dasharray="4 5"/><path d="M264 202H280"/><path d="M518 202H534"/><path d="M391 197Q405 185 419 195"/>
+    </g>
+    <use href="#reactant" x="146" y="151"/><use href="#reactant" x="378" y="177" opacity=".55"/>
+    <path d="M400 235V249" stroke="#ffc892" stroke-width="2" stroke-dasharray="3 3"/>
+    <use href="#product" x="400" y="228"/><use href="#product" x="692" y="150"/>
+    <g text-anchor="middle" font-size="13" fill="#aed7e4"><text x="146" y="316">反应物接近并占据表面位点</text><text x="400" y="316">吸附物种在位点发生转化</text><text x="654" y="316">产物离开，位点重新可用</text></g>
+    <circle cx="39" cy="366" r="5" fill="url(#warm)"/><text x="52" y="371" font-size="12" fill="#aed7e4">暖色标出参与转化的原子或表面位点 · 原子与晶格为抽象示意</text>
+  </g>
+</svg>

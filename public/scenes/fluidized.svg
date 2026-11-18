@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400" role="img" aria-labelledby="title desc">
+<title id="title">气固流化床剖面与热场</title>
+<desc id="desc">气体从底部气室经分布板进入膨胀床层。气泡在床内长大并上升，颗粒随气泡尾涡上升，在靠壁区域回落。颜色示意相对冷热。</desc>
+<defs>
+  <linearGradient id="bg" x2="0%" y2="100%"><stop stop-color="#101f3b"/><stop offset="1" stop-color="#080f21"/></linearGradient>
+  <linearGradient id="heat" x2="0%" y2="100%"><stop stop-color="#15475c"/><stop offset=".4" stop-color="#27546d"/><stop offset=".73" stop-color="#9d5147"/><stop offset="1" stop-color="#45344d"/></linearGradient>
+  <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#799bc5" stroke-opacity=".09"/></pattern>
+  <marker id="gas" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#57dbf3"/></marker>
+  <marker id="solid" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10L2 5Z" fill="#ffb18a"/></marker>
+</defs>
+<rect width="800" height="400" fill="url(#bg)"/>
+<rect x="24" y="83" width="752" height="261" rx="16" fill="url(#grid)" stroke="#2b4264"/>
+<g font-family="Inter, Microsoft YaHei, PingFang SC, sans-serif">
+  <text x="28" y="52" fill="#eff6ff" font-size="26">气固流化床剖面与热场</text>
+  <rect x="634" y="26" width="138" height="36" rx="14" fill="#112742" stroke="#345275"/>
+  <text x="703" y="49" fill="#b7d7ee" font-size="11" text-anchor="middle" letter-spacing="2">SCHEMATIC</text>
+  <path d="M370 99V112L245 132Q232 134 232 151V307Q232 324 249 324H550Q567 324 567 307V151Q567 134 554 132L430 112V99Z" fill="#102a42" stroke="#7294ba" stroke-width="2"/>
+  <path d="M233 173Q260 156 291 170T351 169T410 163T471 168T530 165Q549 157 566 171V285H233Z" fill="url(#heat)"/>
+  <path d="M233 173Q260 156 291 170T351 169T410 163T471 168T530 165Q549 157 566 171" fill="none" stroke="#a0dce7" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <path d="M238 227Q303 243 373 225T508 224T563 220M238 252Q305 264 374 252T507 251T563 245" fill="none" stroke="#ffb18a" stroke-opacity=".44"/>
+  <g fill="#ffe1bd">
+<circle cx="268" cy="126" r="1.4" opacity="0.42"/><circle cx="313" cy="126" r="1.8499999999999999" opacity="0.42"/><circle cx="341" cy="126" r="2.3" opacity="0.42"/><circle cx="369" cy="126" r="1.4" opacity="0.42"/><circle cx="397" cy="126" r="1.8499999999999999" opacity="0.42"/><circle cx="442" cy="126" r="2.3" opacity="0.42"/><circle cx="470" cy="126" r="1.4" opacity="0.42"/><circle cx="498" cy="126" r="1.8499999999999999" opacity="0.42"/><circle cx="526" cy="126" r="2.3" opacity="0.42"/>
+<circle cx="270" cy="146" r="1.8499999999999999" opacity="0.42"/><circle cx="315" cy="146" r="2.3" opacity="0.42"/><circle cx="343" cy="146" r="1.4" opacity="0.42"/><circle cx="371" cy="146" r="1.8499999999999999" opacity="0.42"/><circle cx="399" cy="146" r="2.3" opacity="0.42"/><circle cx="444" cy="146" r="1.4" opacity="0.42"/><circle cx="472" cy="146" r="1.8499999999999999" opacity="0.42"/><circle cx="500" cy="146" r="2.3" opacity="0.42"/><circle cx="528" cy="146" r="1.4" opacity="0.42"/>
+<circle cx="253" cy="180" r="2.3" opacity="0.68"/><circle cx="266" cy="180" r="1.4" opacity="0.68"/><circle cx="290" cy="180" r="1.8499999999999999" opacity="0.68"/><circle cx="303" cy="180" r="2.3" opacity="0.68"/><circle cx="327" cy="180" r="1.4" opacity="0.68"/><circle cx="340" cy="180" r="1.8499999999999999" opacity="0.68"/><circle cx="353" cy="180" r="2.3" opacity="0.68"/><circle cx="377" cy="180" r="1.4" opacity="0.68"/><circle cx="390" cy="180" r="1.8499999999999999" opacity="0.68"/><circle cx="403" cy="180" r="2.3" opacity="0.68"/><circle cx="427" cy="180" r="1.4" opacity="0.68"/><circle cx="440" cy="180" r="1.8499999999999999" opacity="0.68"/><circle cx="453" cy="180" r="2.3" opacity="0.68"/><circle cx="477" cy="180" r="1.4" opacity="0.68"/><circle cx="490" cy="180" r="1.8499999999999999" opacity="0.68"/><circle cx="514" cy="180" r="2.3" opacity="0.68"/><circle cx="527" cy="180" r="1.4" opacity="0.68"/><circle cx="540" cy="180" r="1.8499999999999999" opacity="0.68"/>
+<circle cx="255" cy="200" r="1.4" opacity="0.68"/><circle cx="268" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="292" cy="200" r="2.3" opacity="0.68"/><circle cx="305" cy="200" r="1.4" opacity="0.68"/><circle cx="318" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="342" cy="200" r="2.3" opacity="0.68"/><circle cx="355" cy="200" r="1.4" opacity="0.68"/><circle cx="368" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="392" cy="200" r="2.3" opacity="0.68"/><circle cx="405" cy="200" r="1.4" opacity="0.68"/><circle cx="429" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="442" cy="200" r="2.3" opacity="0.68"/><circle cx="455" cy="200" r="1.4" opacity="0.68"/><circle cx="479" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="492" cy="200" r="2.3" opacity="0.68"/><circle cx="505" cy="200" r="1.4" opacity="0.68"/><circle cx="529" cy="200" r="1.8499999999999999" opacity="0.68"/><circle cx="542" cy="200" r="2.3" opacity="0.68"/>
+<circle cx="257" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="270" cy="209" r="2.3" opacity="0.68"/><circle cx="283" cy="209" r="1.4" opacity="0.68"/><circle cx="307" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="320" cy="209" r="2.3" opacity="0.68"/><circle cx="344" cy="209" r="1.4" opacity="0.68"/><circle cx="357" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="370" cy="209" r="2.3" opacity="0.68"/><circle cx="394" cy="209" r="1.4" opacity="0.68"/><circle cx="407" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="420" cy="209" r="2.3" opacity="0.68"/><circle cx="444" cy="209" r="1.4" opacity="0.68"/><circle cx="457" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="470" cy="209" r="2.3" opacity="0.68"/><circle cx="494" cy="209" r="1.4" opacity="0.68"/><circle cx="507" cy="209" r="1.8499999999999999" opacity="0.68"/><circle cx="531" cy="209" r="2.3" opacity="0.68"/><circle cx="544" cy="209" r="1.4" opacity="0.68"/>
+<circle cx="259" cy="229" r="2.3" opacity="0.68"/><circle cx="272" cy="229" r="1.4" opacity="0.68"/><circle cx="285" cy="229" r="1.8499999999999999" opacity="0.68"/><circle cx="309" cy="229" r="2.3" opacity="0.68"/><circle cx="322" cy="229" r="1.4" opacity="0.68"/><circle cx="335" cy="229" r="1.8499999999999999" opacity="0.68"/><circle cx="359" cy="229" r="2.3" opacity="0.68"/><circle cx="372" cy="229" r="1.4" opacity="0.68"/><circle cx="385" cy="229" r="1.8499999999999999" opacity="0.68"/><circle cx="409" cy="229" r="2.3" opacity="0.68"/><circle cx="422" cy="229" r="1.4" opacity="0.68"/><circle cx="446" cy="229" r="1.8499999999999999" opacity="0.68"/><circle cx="459" cy="229" r="2.3" opacity="0.68"/><circle cx="472" cy="229" r="1.4" opacity="0.68"/><circle cx="496" cy="229" r="1.8499999999999999" opacity="0.68"/><circle cx="509" cy="229" r="2.3" opacity="0.68"/><circle cx="522" cy="229" r="1.4" opacity="0.68"/><circle cx="546" cy="229" r="1.8499999999999999" opacity="0.68"/>
+<circle cx="250" cy="249" r="1.4" opacity="0.68"/><circle cx="274" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="287" cy="249" r="2.3" opacity="0.68"/><circle cx="300" cy="249" r="1.4" opacity="0.68"/><circle cx="324" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="337" cy="249" r="2.3" opacity="0.68"/><circle cx="361" cy="249" r="1.4" opacity="0.68"/><circle cx="374" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="387" cy="249" r="2.3" opacity="0.68"/><circle cx="411" cy="249" r="1.4" opacity="0.68"/><circle cx="424" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="437" cy="249" r="2.3" opacity="0.68"/><circle cx="461" cy="249" r="1.4" opacity="0.68"/><circle cx="474" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="487" cy="249" r="2.3" opacity="0.68"/><circle cx="511" cy="249" r="1.4" opacity="0.68"/><circle cx="524" cy="249" r="1.8499999999999999" opacity="0.68"/><circle cx="548" cy="249" r="2.3" opacity="0.68"/>
+<circle cx="252" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="276" cy="269" r="2.3" opacity="0.68"/><circle cx="289" cy="269" r="1.4" opacity="0.68"/><circle cx="302" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="326" cy="269" r="2.3" opacity="0.68"/><circle cx="339" cy="269" r="1.4" opacity="0.68"/><circle cx="352" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="376" cy="269" r="2.3" opacity="0.68"/><circle cx="389" cy="269" r="1.4" opacity="0.68"/><circle cx="402" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="426" cy="269" r="2.3" opacity="0.68"/><circle cx="439" cy="269" r="1.4" opacity="0.68"/><circle cx="463" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="476" cy="269" r="2.3" opacity="0.68"/><circle cx="489" cy="269" r="1.4" opacity="0.68"/><circle cx="513" cy="269" r="1.8499999999999999" opacity="0.68"/><circle cx="526" cy="269" r="2.3" opacity="0.68"/><circle cx="539" cy="269" r="1.4" opacity="0.68"/>
+<circle cx="254" cy="278" r="2.3" opacity="0.68"/><circle cx="267" cy="278" r="1.4" opacity="0.68"/><circle cx="291" cy="278" r="1.8499999999999999" opacity="0.68"/><circle cx="304" cy="278" r="2.3" opacity="0.68"/><circle cx="317" cy="278" r="1.4" opacity="0.68"/><circle cx="341" cy="278" r="1.8499999999999999" opacity="0.68"/><circle cx="354" cy="278" r="2.3" opacity="0.68"/><circle cx="378" cy="278" r="1.4" opacity="0.68"/><circle cx="391" cy="278" r="1.8499999999999999" opacity="0.68"/><circle cx="404" cy="278" r="2.3" opacity="0.68"/><circle cx="428" cy="278" r="1.4" opacity="0.68"/><circle cx="441" cy="278" r="1.8499999999999999" opacity="0.68"/><circle cx="454" cy="278" r="2.3" opacity="0.68"/><circle cx="478" cy="278" r="1.4" opacity="0.68"/><circle cx="491" cy="278" r="1.8499999999999999" opacity="0.68"/><circle cx="504" cy="278" r="2.3" opacity="0.68"/><circle cx="528" cy="278" r="1.4" opacity="0.68"/><circle cx="541" cy="278" r="1.8499999999999999" opacity="0.68"/>
+  </g>
+  <g fill="#14354e" stroke="#66cde4" stroke-width="1.5">
+    <path d="M386 185C364 180 361 158 373 147C384 137 409 137 423 148C437 161 428 180 411 184Q400 173 386 185Z"/>
+    <path d="M426 226C412 221 410 207 420 200C432 191 451 195 456 207C460 219 452 227 443 228Q435 221 426 226Z"/>
+    <path d="M350 241C337 237 337 223 346 218C356 212 371 216 374 226C377 236 370 241 362 242Q356 237 350 241Z"/>
+    <path d="M396 270C385 266 386 255 395 251C404 247 415 253 414 261Q413 270 406 271Q401 266 396 270Z"/>
+  </g>
+  <path d="M233 289H566" stroke="#b9d0e7" stroke-width="6" stroke-dasharray="12 5"/>
+  <g fill="none" stroke="#57dbf3" stroke-width="2.4" marker-end="url(#gas)">
+    <path d="M173 310H398"/>
+    <path d="M293 311V265"/><path d="M399 311V276"/><path d="M508 311V265"/>
+    <path d="M400 133V96"/>
+  </g>
+  <path d="M179 305H232M179 315H232" stroke="#7294ba"/>
+  <g fill="none" stroke="#ffb18a" stroke-width="2.1" marker-end="url(#solid)">
+    <path d="M313 250Q301 228 314 206Q329 179 305 180Q271 177 270 210Q266 234 280 247"/>
+    <path d="M479 249Q500 232 485 207Q472 180 493 180Q529 177 532 211Q533 232 520 247"/>
+  </g>
+  <g fill="none" stroke="#9bb7d2" stroke-width="1">
+    <path d="M233 172H171L154 157"/><path d="M435 127H594L609 118"/>
+    <path d="M455 204L575 181H605"/><path d="M530 226H605"/>
+    <path d="M543 289H605"/>
+  </g>
+  <g fill="#d7e7f8" font-size="14">
+    <text x="57" y="154">床层膨胀</text>
+    <text x="46" y="307" fill="#57dbf3">气体由分布板向上</text>
+    <text x="613" y="122">稀相区</text>
+    <text x="613" y="185">气泡</text>
+    <text x="613" y="230" fill="#ffb18a">颗粒回落 / 循环</text>
+    <text x="613" y="294">气体分布板</text>
+  </g>
+  <path d="M36 369H64" stroke="#57dbf3" stroke-width="2.4" marker-end="url(#gas)"/>
+  <path d="M153 369H181" stroke="#ffb18a" stroke-width="2.1" marker-end="url(#solid)"/>
+  <rect x="337" y="363" width="20" height="11" rx="3" fill="#27546d"/>
+  <rect x="423" y="363" width="20" height="11" rx="3" fill="#9d5147"/>
+  <g fill="#c8d8ec" font-size="14">
+    <text x="74" y="374">气体流向</text><text x="191" y="374">颗粒运动</text>
+    <text x="365" y="374">相对冷</text><text x="451" y="374">相对热</text>
+    <text x="603" y="374">定性热场示意</text>
+  </g>
+</g>
+</svg>

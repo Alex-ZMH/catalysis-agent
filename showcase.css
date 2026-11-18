@@ -1,0 +1,205 @@
+#showcase {
+  --cs-bg: #050608;
+  --cs-card: #10151a;
+  --cs-hover: #172027;
+  --cs-ink: #f3f6f8;
+  --cs-muted: #a9b3bb;
+  --cs-subtle: #83929e;
+  --cs-accent: #9de8f5;
+  --cs-gutter: clamp(24px, 4.2vw, 80px);
+  background: var(--cs-bg);
+  color: var(--cs-ink);
+  font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow: clip;
+}
+
+#showcase .cs-shell { width: calc(100% - 2 * var(--cs-gutter)); max-width: 1600px; margin-inline: auto; }
+#showcase :is(.cs-header, .cs-hero, .cs-workflow, .cs-footer, .cs-sources) :is(a, button) {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+}
+#showcase :is(.cs-header, .cs-hero, .cs-footer, .cs-sources) button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+#showcase :is(.cs-header, .cs-hero, .cs-workflow, .cs-footer, .cs-sources) :is(h1, h2, p) { margin: 0; }
+#showcase :is(.cs-stage, .cs-header a, .cs-hero a, .cs-header button, .cs-hero button, .cs-workflow a, .cs-footer a, .cs-footer button, .cs-sources button):focus-visible {
+  outline: 2px solid var(--cs-accent);
+  outline-offset: 3px;
+}
+
+#showcase .cs-header {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 3;
+  height: 92px;
+  max-width: 1920px;
+  margin-inline: auto;
+  padding-inline: var(--cs-gutter);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+}
+#showcase .cs-header nav { display: flex; gap: clamp(16px, 3vw, 40px); color: var(--cs-muted); font-size: 14px; }
+#showcase .cs-header nav a:hover { color: var(--cs-ink); }
+#showcase .cs-brand { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+#showcase .cs-brand strong { font-size: 24px; font-weight: 600; }
+#showcase .cs-brand strong span { color: var(--cs-muted); font-size: 13px; letter-spacing: .08em; }
+#showcase .cs-brand-mark, #showcase .cs-entry span { color: var(--cs-accent); }
+#showcase .cs-header .cs-entry { display: inline-flex; align-items: center; gap: 24px; background: var(--cs-card); padding: 14px 22px; font-size: 14px; white-space: nowrap; }
+#showcase .cs-header .cs-entry:hover { background: var(--cs-hover); }
+#showcase .cs-header .cs-menu { display: none; font-size: 22px; padding: 6px; }
+
+#showcase .cs-hero { padding-top: 32px; }
+#showcase .cs-intro { text-align: center; padding-bottom: 10px; }
+#showcase .cs-intro h1 { font-size: clamp(44px, 4.7vw, 76px); font-weight: 500; line-height: 1.16; letter-spacing: -.045em; }
+#showcase .cs-intro p { margin-top: 18px; color: var(--cs-muted); font-size: 17px; line-height: 1.8; }
+#showcase .cs-hero-actions { margin-top: 20px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 12px 28px; font-size: 15px; }
+@media (min-width: 801px) { #showcase .cs-hero-actions { margin-top: 30px; } }
+#showcase .cs-hero-actions a { display: inline-flex; align-items: center; gap: 12px; }
+#showcase :is(.cs-hero-actions, .cs-workflow, .cs-sources) .cs-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 42px;
+  padding: 15px 23px;
+  background: var(--cs-accent);
+  color: var(--cs-bg);
+  font-size: 15px;
+  font-weight: 600;
+}
+#showcase :is(.cs-hero-actions, .cs-workflow, .cs-sources) .cs-primary:hover { background: var(--cs-ink); }
+
+#showcase .cs-explorer { margin-top: 18px; scroll-margin-top: 20px; }
+#showcase .cs-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 48px; gap: 16px; color: var(--cs-muted); font-size: 14px; }
+#showcase .cs-toolbar p span { margin-right: 18px; color: var(--cs-accent); font: 11px ui-monospace, monospace; letter-spacing: .13em; }
+#showcase .cs-toolbar .cs-reset { padding: 12px 16px; background: var(--cs-card); color: var(--cs-ink); white-space: nowrap; }
+#showcase .cs-reset:disabled { opacity: .42; cursor: default; }
+#showcase .cs-stage { position: relative; display: grid; grid-template-columns: 34% 66%; min-height: clamp(340px, 28vw, 500px); scroll-margin-top: 12px; }
+#showcase .cs-picture { position: relative; overflow: hidden; min-width: 0; }
+#showcase .cs-picture img { display: block; position: absolute; top: 0; height: 100%; mix-blend-mode: screen; }
+#showcase [data-scale="site"] { --cs-magnify: 1.56; --cs-y: 53%; }
+#showcase [data-scale="reaction"] { --cs-magnify: 1.7; --cs-y: 56%; }
+#showcase [data-scale="transport"] { --cs-magnify: 1.34; --cs-y: 50%; }
+#showcase [data-scale="equipment"] { --cs-magnify: 1.12; --cs-y: 44%; }
+#showcase [data-scale="overview"] .cs-picture { grid-column: 1 / -1; }
+#showcase [data-scale="overview"] .cs-picture img { width: 100%; object-fit: contain; }
+#showcase .cs-explorer:not([data-scale="overview"]) .cs-picture img {
+  left: 50%;
+  top: 50%;
+  height: calc(100% * var(--cs-magnify));
+  width: auto;
+  max-width: none;
+  aspect-ratio: 3 / 1;
+  transform: translate(calc(-1 * var(--cs-x)), calc(-1 * var(--cs-y)));
+  clip-path: inset(0 var(--cs-right) 0 var(--cs-left));
+  transition: transform .8s cubic-bezier(.22, .8, .2, 1);
+}
+#showcase .cs-copy { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 24px 28px 24px 4px; }
+#showcase .cs-copy[hidden] { display: none; }
+#showcase .cs-method { color: var(--cs-accent); font-size: 14px; margin-bottom: 17px; }
+#showcase .cs-copy h2 { font-size: clamp(25px, 2.7vw, 43px); font-weight: 500; line-height: 1.3; margin-bottom: 20px; }
+#showcase .cs-copy p { font-size: 16px; line-height: 1.8; }
+#showcase .cs-copy .cs-detail { font-size: 14px; color: var(--cs-muted); margin-top: 15px; }
+#showcase .cs-key { margin-top: 18px; color: var(--cs-subtle); font-size: 12px; line-height: 1.7; }
+#showcase [data-scale="equipment"] .cs-colorbar { display: block; width: 140px; height: 4px; margin-bottom: 8px; background: linear-gradient(90deg, #163657, #45cfda, #ffd090); }
+#showcase .cs-focus-actions { margin-top: 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px 20px; }
+#showcase .cs-focus-actions :is(a, button) { padding: 5px 0; font-size: 14px; }
+#showcase .cs-focus-actions .cs-draft { color: var(--cs-accent); }
+#showcase .cs-focus-actions .cs-case { color: var(--cs-muted); }
+#showcase .cs-focus-actions span { margin-left: 8px; }
+#showcase .cs-overview-note { position: absolute; bottom: 8px; inset-inline: 0; display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; pointer-events: none; color: var(--cs-muted); font-size: 13px; text-shadow: 0 1px 4px #000; }
+#showcase .cs-explorer:not([data-scale="overview"]) .cs-overview-note { display: none; }
+#showcase .cs-stops { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 14px; }
+#showcase .cs-stops button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 24px 18px; text-align: left; background: var(--cs-bg); color: var(--cs-muted); }
+#showcase .cs-stops button:is(:hover, [aria-selected="true"]) { background: var(--cs-card); color: var(--cs-ink); }
+#showcase .cs-stops button[aria-selected="true"] .cs-stop-icon { color: var(--cs-accent); }
+#showcase .cs-stops strong { display: block; font-size: 18px; font-weight: 500; line-height: 1.4; }
+#showcase .cs-stops small { display: block; margin-top: 8px; color: var(--cs-subtle); font-size: 13px; line-height: 1.5; }
+#showcase .cs-stop-icon { color: var(--cs-accent); }
+#showcase .cs-footnote { padding-top: 22px; text-align: center; color: var(--cs-subtle); font-size: 13px; }
+
+#showcase .cs-workflow { display: flex; justify-content: space-between; align-items: center; gap: 40px; padding-block: 150px; scroll-margin-top: 36px; }
+#showcase .cs-workflow h2 { font-size: clamp(34px, 5.2vw, 79px); font-weight: 500; letter-spacing: -.04em; line-height: 1.16; }
+#showcase .cs-workflow p { margin-top: 28px; color: var(--cs-muted); line-height: 1.8; }
+#showcase .cs-footer { padding-bottom: 38px; }
+#showcase .cs-wordmark { color: #26323b; font-size: clamp(44px, 16vw, 255px); font-weight: 500; line-height: .95; letter-spacing: -.065em; white-space: nowrap; }
+#showcase .cs-wordmark span { font-size: .43em; letter-spacing: -.05em; }
+#showcase .cs-footer-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 22px 32px; margin-top: 42px; color: var(--cs-subtle); font-size: 13px; }
+#showcase .cs-footer-bottom .cs-about { margin-left: auto; color: var(--cs-muted); padding: 6px 0; }
+#showcase .cs-sources { box-sizing: border-box; width: min(570px, calc(100% - 32px)); padding: clamp(22px, 5vw, 42px); border: 1px solid #303b44; background: var(--cs-card); color: var(--cs-ink); }
+#showcase .cs-sources::backdrop { background: #000a; }
+#showcase .cs-sources p { margin-top: 16px; color: var(--cs-muted); line-height: 1.75; }
+#showcase .cs-sources form { margin-top: 24px; }
+
+@media (max-width: 1100px) {
+  #showcase .cs-stage { grid-template-columns: 36% 64%; }
+  #showcase .cs-stops button { padding: 22px 13px; }
+  #showcase .cs-stops strong { font-size: 16px; }
+  #showcase .cs-stop-icon { display: none; }
+  #showcase .cs-copy p { font-size: 15px; }
+  #showcase .cs-workflow { padding-block: 110px; }
+}
+@media (max-width: 800px) {
+  #showcase .cs-header { height: 72px; }
+  #showcase .cs-header nav { display: none; position: absolute; top: 100%; inset-inline: var(--cs-gutter); flex-direction: column; gap: 0; background: var(--cs-card); }
+  #showcase .cs-header.cs-menu-open nav { display: flex; }
+  #showcase .cs-header nav a { padding: 14px 18px; }
+  #showcase .cs-header .cs-entry { margin-left: auto; }
+  #showcase .cs-header .cs-menu { display: block; }
+  #showcase .cs-intro h1 { font-size: 42px; }
+  #showcase .cs-intro h1 span { display: block; }
+  #showcase .cs-intro p { margin-top: 22px; font-size: 16px; }
+  #showcase .cs-stage { min-height: 380px; }
+  #showcase .cs-stops { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #showcase .cs-stops button:first-child { grid-column: 1 / -1; padding: 14px 18px; }
+  #showcase .cs-stops button:first-child > span:first-child { display: flex; align-items: center; gap: 18px; }
+  #showcase .cs-stops button:first-child small { margin: 0; }
+  #showcase .cs-workflow { display: block; }
+  #showcase .cs-workflow .cs-primary { margin-top: 36px; }
+}
+@media (max-width: 680px) {
+  #showcase .cs-stage { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  #showcase .cs-picture { min-height: min(310px, 120vw); }
+  #showcase [data-scale="overview"] .cs-picture { min-height: 260px; }
+  #showcase .cs-copy { padding: 20px 0 10px; }
+  #showcase .cs-method { font-size: 13px; margin-bottom: 8px; }
+  #showcase .cs-copy h2 { font-size: 29px; margin-bottom: 10px; }
+  #showcase .cs-copy p { font-size: 14px; }
+  #showcase .cs-copy .cs-detail { display: none; }
+  #showcase .cs-key { margin-top: 9px; }
+  #showcase .cs-focus-actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
+  #showcase .cs-overview-note { bottom: 10px; font-size: 10px; }
+}
+@media (max-width: 540px) {
+  #showcase { --cs-gutter: 18px; }
+  #showcase .cs-header { height: 64px; gap: 8px; }
+  #showcase .cs-brand { gap: 5px; }
+  #showcase .cs-brand strong { font-size: 16px; }
+  #showcase .cs-brand strong span { font-size: 10px; }
+  #showcase .cs-brand-mark { width: 18px; height: 18px; }
+  #showcase .cs-header .cs-entry { gap: 5px; padding: 9px 8px; font-size: 12px; }
+  #showcase .cs-intro h1 { font-size: clamp(32px, 8.7vw, 45px); line-height: 1.3; }
+  #showcase .cs-intro p { font-size: 14px; }
+  #showcase .cs-hero-actions { gap: 10px 18px; font-size: 14px; }
+  #showcase .cs-hero-actions .cs-primary { padding: 13px 16px; gap: 18px; font-size: 14px; }
+  #showcase .cs-toolbar { font-size: 13px; }
+  #showcase .cs-toolbar p span { display: block; margin: 0 0 5px; font-size: 9px; }
+  #showcase .cs-toolbar .cs-reset { padding: 10px 12px; font-size: 12px; }
+  #showcase [data-scale="overview"] .cs-picture { min-height: 200px; }
+  #showcase .cs-stops { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
+  #showcase .cs-stops button { padding: 18px 14px; }
+  #showcase .cs-stops small { font-size: 12px; }
+  #showcase .cs-footnote { text-align: left; font-size: 12px; line-height: 1.8; }
+  #showcase .cs-workflow { padding-block: 80px; }
+  #showcase .cs-footer-bottom { margin-top: 34px; }
+  #showcase .cs-footer-bottom a { width: 100%; }
+  #showcase .cs-footer-bottom .cs-about { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #showcase .cs-explorer:not([data-scale="overview"]) .cs-picture img { transition: none; }
+}

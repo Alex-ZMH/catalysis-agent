@@ -1,0 +1,119 @@
+.catalysis-lab {
+  padding-block: 110px;
+  background: #0b0e12;
+  color: var(--text, #eff5f8);
+}
+
+.catalysis-lab-layout {
+  width: min(1280px, calc(100% - 64px));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10%;
+  align-items: center;
+}
+
+.catalysis-lab-intro h2 {
+  margin: 0;
+  font-size: clamp(32px, 5vw, 72px);
+  line-height: 1.12;
+  letter-spacing: -.045em;
+}
+
+.catalysis-lab-intro p {
+  margin: 10px 0 0;
+  color: var(--muted, #a9b3bb);
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.catalysis-lab-intro h2 + p { margin-top: 28px; font-size: 18px; }
+.catalysis-lab-formula { margin: 40px 0 22px; font-size: clamp(26px, 3vw, 48px); }
+.catalysis-lab-panel { padding: 38px 42px; background: var(--panel, #10151a); }
+
+.catalysis-lab-heading,
+.catalysis-lab-readout,
+.catalysis-lab-panel label,
+.catalysis-lab-action {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.catalysis-lab-panel small,
+.catalysis-lab-note,
+.catalysis-lab-chart figcaption { color: var(--muted, #a9b3bb); font-size: 13px; }
+.catalysis-lab-readout { flex-wrap: wrap; margin: 22px 0 24px; }
+.catalysis-lab-readout output { color: var(--ice, #9de8f5); font-variant-numeric: tabular-nums; }
+.catalysis-lab-readout output span:first-child {
+  font-size: clamp(48px, 6vw, 92px);
+  line-height: 1;
+  letter-spacing: -.06em;
+}
+
+.catalysis-lab-readout output span:last-child { margin-left: 8px; font-size: 24px; }
+.catalysis-lab-panel label { color: var(--muted, #a9b3bb); font-size: 14px; }
+.catalysis-lab-panel label span { color: var(--text, #eff5f8); font-variant-numeric: tabular-nums; }
+.catalysis-lab-panel input[type="range"] {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  margin: 2px 0 12px;
+  accent-color: var(--ice, #9de8f5);
+  cursor: pointer;
+  color-scheme: dark;
+}
+
+.catalysis-lab-note { margin: 0; }
+.catalysis-lab-chart { margin: 18px 0 0; }
+.catalysis-lab-chart svg { display: block; width: 100%; height: auto; }
+.catalysis-lab-chart text { fill: var(--muted, #a9b3bb); font: 12px "Segoe UI", "Microsoft YaHei", sans-serif; }
+.catalysis-lab-grid { stroke: var(--edge, #293742); fill: none; }
+.catalysis-lab-axes { stroke: var(--muted, #a9b3bb); fill: none; }
+.catalysis-lab-curve { stroke: var(--ice, #9de8f5); stroke-width: 2; fill: none; }
+.catalysis-lab-point { fill: #ffd086; stroke: var(--panel, #10151a); stroke-width: 1.5; }
+.catalysis-lab-chart figcaption { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; }
+.catalysis-lab-chart figcaption span::before {
+  content: "";
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+  width: 14px;
+  height: 2px;
+  background: var(--ice, #9de8f5);
+}
+
+.catalysis-lab-chart figcaption span:last-child::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffd086;
+}
+
+.catalysis-lab-action {
+  width: 100%;
+  margin-top: 20px;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid var(--edge, #293742);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.catalysis-lab-action:hover { color: var(--ice, #9de8f5); }
+.catalysis-lab :is(button, input):focus-visible { outline: 2px solid var(--ice, #9de8f5); outline-offset: 3px; }
+
+@media (max-width: 900px) {
+  .catalysis-lab { padding-block: 80px; }
+  .catalysis-lab-layout { grid-template-columns: minmax(0, 1fr); gap: 54px; }
+}
+
+@media (max-width: 560px) {
+  .catalysis-lab { padding-block: 70px; }
+  .catalysis-lab-layout { width: calc(100% - 32px); gap: 32px; }
+  .catalysis-lab-panel { padding: 24px 18px; }
+}
