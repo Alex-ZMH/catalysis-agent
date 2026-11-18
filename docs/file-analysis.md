@@ -47,3 +47,26 @@ A5 的复跑命令如下。最后一个可选目录用于保存浏览器实拍�
 py -3.13 scripts/synthetic_inputs.py --suite a5 D:/research-data/catalysis-agent/acceptance/a5-inputs
 node tests/browser_a5.cjs http://127.0.0.1:8771 D:/research-data/catalysis-agent/acceptance/a5-inputs D:/research-data/catalysis-agent/acceptance/a5-screens
 ```
+
+## A5 现场盲验
+
+数据负责人先向分析人员交付脱敏原件、单位与采样协议，并交付独立参考文件的 SHA-256。参考文件由数据负责人另行保管，其中的单位、样本位置、预期值、缺失掩码与容差随指纹一起固定。两种参考格式见 [LAMMPS 导入](lammps-import.md) 和 [设备剖面](equipment-import.md)。
+
+1. 在工作台只上传原件。VTU 先指定 A、B、字段、点或单元关联、分量及采样位置，保存需要验收的全部剖面。成功后记录运行 ID。
+2. 在集群使用下面的 freeze 命令。回执绑定运行清单、代码版本、原件、参数、结果、分析详情和参考指纹。将命令输出的回执 SHA-256 在揭盲前交给复核人单独留存。
+3. 复核人披露原参考文件，使用留存的回执 SHA-256 执行 reveal。命令检查所有工件后直接读取冻结坐标和剖面，逐帧逐点比较。每个冻结剖面都要有唯一对应的参考。结果报告记录审核状态、误差和文件指纹。参考文件或数值不符时返回非零状态。相同路径只接受字节完全相同的证据，复验其他参考须使用新的输出路径。
+
+在版本化的 V100 代码目录内执行。工作台数据目录和证据目录位于仓库外。下例中的变量由项目操作员按实际路径和运行 ID 提供。
+
+```bash
+python -m packages.agent.blind freeze \
+  --data-dir "$WORKSPACE" --project "$PROJECT" --run-id "$RUN_ID" \
+  --reference-sha256 "$REFERENCE_SHA256" --receipt "$EVIDENCE/receipt.json"
+
+python -m packages.agent.blind reveal \
+  --data-dir "$WORKSPACE" --project "$PROJECT" --receipt "$EVIDENCE/receipt.json" \
+  --receipt-sha256 "$RETAINED_RECEIPT_SHA256" --reference "$REFERENCE" \
+  --report "$EVIDENCE/report.json"
+```
+
+同一账户下的合成演练可以验证冻结和比较流程。现场盲验的保密性和留存时间由独立持有参考与回执的人员负责。

@@ -28,9 +28,10 @@ _COORDINATES = {
     "xs": (("xs", "ys", "zs"), "wrapped", True),
     "xsu": (("xsu", "ysu", "zsu"), "unwrapped", True),
 }
+DEFAULT_REFERENCE_BYTES = 32 * 1024**2
 _LIMITS = {"max_bytes": 32 * 1024**2, "max_line_bytes": 64 * 1024,
            "max_frames": 10_000, "max_atoms_per_frame": 100_000,
-           "max_total_atoms": 200_000, "max_reference_bytes": 32 * 1024**2}
+           "max_total_atoms": 200_000, "max_reference_bytes": DEFAULT_REFERENCE_BYTES}
 
 
 def _integer(value, label, minimum=0):
@@ -304,6 +305,57 @@ def _verify(dump, checks, reference, limits):
     except (ValueError, RecursionError) as exc:
         raise ValueError(f"{filename}: {exc}") from exc
     return artifact_id
+
+
+def compare_frozen(result, details, reference, *, max_reference_bytes=DEFAULT_REFERENCE_BYTES):
+    """Compare a frozen v1 dump directly with an independently disclosed reference."""
+    if not isinstance(result, dict) or "dump" not in result:
+        raise ValueError("frozen MD comparison requires a dump")
+    try:
+        validate_md(result)
+    except ValidationError as exc:
+        raise ValueError(f"frozen MD result is invalid: {exc.message}") from exc
+
+    if not isinstance(details, dict):
+        raise ValueError("frozen MD details must be an object")
+    dump = result.get("dump")
+    checks = details.get("frame_checks")
+    if not isinstance(checks, list) or len(checks) != len(dump["frames"]):
+        raise ValueError("frozen MD details must contain one frame check per frame")
+
+    frozen_checks = []
+    for index, (frame, check) in enumerate(zip(dump["frames"], checks)):
+        if not isinstance(check, dict) or check.get("timestep") != frame["timestep"]:
+            raise ValueError(f"frozen MD frame check {index} does not match its frame")
+        boundary_flags = check.get("boundary_flags")
+        if (
+            not isinstance(boundary_flags, list)
+            or len(boundary_flags) != 3
+            or any(not isinstance(flag, str) for flag in boundary_flags)
+        ):
+            raise ValueError(f"frozen MD frame check {index} has invalid boundary flags")
+        frozen_checks.append(dict(check))
+
+    if not isinstance(reference, tuple) or len(reference) != 3:
+        raise ValueError("reference must be a (filename, bytes, artifact_id) tuple")
+    atom_counts = [len(frame["atoms"]) for frame in dump["frames"]]
+    limits = dict(_LIMITS, max_reference_bytes=max_reference_bytes)
+    limits["max_frames"] = max(limits["max_frames"], len(dump["frames"]))
+    limits["max_atoms_per_frame"] = max(limits["max_atoms_per_frame"], max(atom_counts, default=0))
+    _verify(dump, frozen_checks, reference, limits)
+
+    max_abs_error = 0.0
+    max_cell_abs_error = 0.0
+    for check in frozen_checks:
+        max_abs_error = max(max_abs_error, check["max_abs_error"])
+        max_cell_abs_error = max(max_cell_abs_error, check["max_cell_abs_error"])
+    return {
+        "frames": len(dump["frames"]),
+        "atoms": sum(atom_counts),
+        "max_abs_error": max_abs_error,
+        "max_cell_abs_error": max_cell_abs_error,
+        "length_unit": dump["length_unit"],
+    }
 
 
 def read_import(filename, content, options, raw_id, reference=None):

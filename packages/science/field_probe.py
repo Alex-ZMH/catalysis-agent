@@ -2,6 +2,7 @@
 
 import json
 import math
+from fractions import Fraction
 
 import numpy as np
 from jsonschema import ValidationError
@@ -126,7 +127,8 @@ def _number(value):
         return False
 
 
-def _check_sample_budget(profiles, label):
+def _check_sample_budget(profiles, label, limit=None):
+    limit = _MAX_TOTAL_SAMPLES if limit is None else limit
     total = 0
     for index, profile in enumerate(profiles):
         if not isinstance(profile, dict):
@@ -137,9 +139,9 @@ def _check_sample_budget(profiles, label):
             total += len(fractions)
         elif type(count) is int and count >= 2:
             total += count
-        if total > _MAX_TOTAL_SAMPLES:
+        if total > limit:
             raise ValueError(
-                f"{label} {index}: total sampling budget exceeds {_MAX_TOTAL_SAMPLES} samples"
+                f"{label} {index}: total sampling budget exceeds {limit} samples"
             )
 
 
@@ -199,7 +201,7 @@ def _invalid_json_constant(token):
     raise ValueError(f"invalid JSON constant {token}")
 
 
-def _references(reference, length_unit):
+def _references(reference, length_unit, sample_limit=None):
     if reference is None:
         return {}
     if not isinstance(reference, dict):
@@ -211,7 +213,7 @@ def _references(reference, length_unit):
     profiles = reference.get("profiles")
     if not isinstance(profiles, list) or not profiles:
         raise ValueError("reference: expected a nonempty profiles array")
-    _check_sample_budget(profiles, "reference profile")
+    _check_sample_budget(profiles, "reference profile", sample_limit)
     required = {"a", "b", "field", "fractions", "unit", "values", "absolute_tolerance"}
     allowed = required | {"relative_tolerance"}
     by_key = {}
@@ -258,6 +260,17 @@ def _compare(index, profile, reference):
         ) from exc
 
 
+def _frozen_profile_spec(profile, label):
+    samples = profile["samples"]
+    spec = {
+        "a": profile["a"],
+        "b": profile["b"],
+        "field": profile["field"],
+        "fractions": [sample["fraction"] for sample in samples],
+    }
+    return _profile_spec(spec, label)
+
+
 def _sample(tree, point, field, values, component):
     if tree is not None:
         for cell in sorted(tree.candidates(point), key=lambda candidate: candidate.index):
@@ -272,6 +285,64 @@ def _sample(tree, point, field, values, component):
     return None
 
 
+def _decode_reference(filename, content):
+    try:
+        parsed = json.loads(content, object_pairs_hook=_unique_json_object,
+                            parse_constant=_invalid_json_constant)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ValueError(f"{filename}: invalid reference JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{filename}: expected a reference JSON object")
+    return parsed
+
+
+def compare_frozen(result, details, reference):
+    """Compare frozen v1 line profiles directly with a disclosed reference."""
+    if not isinstance(result, dict):
+        raise ValueError("frozen equipment result must be an object")
+    profiles = result.get("line_profiles")
+    if not isinstance(profiles, list) or not profiles:
+        raise ValueError("frozen equipment comparison requires line profiles")
+    try:
+        validate_equipment(result)
+    except ValidationError as exc:
+        raise ValueError(f"frozen equipment result is invalid: {exc.message}") from exc
+
+    if not isinstance(reference, tuple) or len(reference) != 3:
+        raise ValueError("reference must be a (filename, bytes, artifact_id) tuple")
+    reference_filename, reference_content, _ = reference
+    reference_document = _decode_reference(reference_filename, reference_content)
+
+    frozen = {}
+    for index, profile in enumerate(profiles):
+        key, _, _ = _frozen_profile_spec(profile, f"frozen profile {index}")
+        if key in frozen:
+            raise ValueError(f"frozen profile {index}: ambiguous duplicate profile")
+        frozen[key] = profile
+    sample_limit = sum(len(profile["samples"]) for profile in profiles)
+    references = _references(reference_document, result["length_unit"], sample_limit)
+    if references.keys() - frozen.keys():
+        raise ValueError("reference profile is not covered by the frozen result")
+    if frozen.keys() - references.keys():
+        raise ValueError("frozen profile is not covered by the reference")
+
+    summaries = []
+    for index, (key, profile) in enumerate(frozen.items()):
+        expected = references[key]
+        _compare(index, profile, expected)
+        samples = profile["samples"]
+        errors = (abs(Fraction(str(row["value"])) - Fraction(str(value)))
+                  for row, value in zip(samples, expected["values"]) if value is not None)
+        summaries.append({
+            **profile["field"], "a": profile["a"], "b": profile["b"], "unit": profile["unit"],
+            "sample_count": len(samples), "missing_count": expected["values"].count(None),
+            "max_abs_error": float(max(errors, default=0)),
+            "absolute_tolerance": expected["absolute_tolerance"],
+            "relative_tolerance": expected.get("relative_tolerance", 0),
+        })
+    return {"profiles": summaries}
+
+
 def read_import(filename, content, options, raw_id, reference=None):
     """Return a validated equipment record and a UI-ready sampling summary."""
     from .vtu_reader import read_mesh
@@ -280,15 +351,7 @@ def read_import(filename, content, options, raw_id, reference=None):
     reference_id = None
     if isinstance(reference, tuple) and len(reference) == 3:
         reference_filename, reference_content, reference_id = reference
-        try:
-            reference = json.loads(
-                reference_content, object_pairs_hook=_unique_json_object,
-                parse_constant=_invalid_json_constant,
-            )
-        except (ValueError, TypeError, RecursionError) as exc:
-            raise ValueError(f"{reference_filename}: invalid reference JSON: {exc}") from exc
-        if not isinstance(reference, dict):
-            raise ValueError(f"{reference_filename}: expected a reference JSON object")
+        reference = _decode_reference(reference_filename, reference_content)
     references = _references(reference, result["length_unit"])
     requested = options.get("profiles", list(references.values()))
     if not isinstance(requested, list):
