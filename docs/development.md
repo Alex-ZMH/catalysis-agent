@@ -8,7 +8,7 @@
 | `contracts/v1/` | 运行清单、内网配置、吸附与动力学的输入和结果、MD 与设备场的规范化输出。JSON Schema 采用 Draft 2020-12，引用由本地注册表解析 |
 | `packages/contracts.py`、`packages/check.py` | 离线结构校验与命令行入口 |
 | `packages/science/` | 四个科学方向的跨字段约束与候选结果复核 |
-| `packages/agent/` | 运行清单、工件图、内容完整性；后续接项目身份与审批 |
+| `packages/agent/` | 运行清单、工件图、内容完整性、人工确认记录和合成 Slurm 提交 |
 | `configs/profiles/`、`requirements.lock` | 内网策略、资源盘点状态与使用过的依赖版本 |
 | `tests/`、`docs/` | 现场可复跑的验收用例、工程约定和签收条件 |
 
@@ -16,7 +16,7 @@
 
 Git 默认忽略未经允许的文件。新增源码、合成验收用例或契约需要按名称或目录核对暂存清单。实验原表、计算输出、模型权重、许可证密钥、赝势文件和备份留在受控存储。配置提交逻辑 ID 和状态；访问凭证由部署环境提供。
 
-V100 的项目根目录为 `~/projects/catalysis-agent/`。`releases/<commit>/` 留存可按提交号识别的代码快照，`envs/<runtime>/` 保存独立环境及版本清单，`jobs/a5/<batch>/` 对应一次验收。批次内的 `scripts/` 存作业和核验代码，`inputs/` 存原件与独立参考，`logs/` 存调度和浏览器日志，`results/` 存工作台记录、哈希和结论，`results/screenshots/` 存浏览器实拍，`bin/` 和 `work/` 分别存编译产物和临时文件。作业号写入批次根目录的 `slurm-job-id.txt`。本次从 SSH 登录节点显式提交，计算和浏览器均在调度分配的节点上执行。
+V100 的项目根目录为 `~/projects/catalysis-agent/`。`releases/<commit>/` 留存可按提交号识别的代码快照，`envs/<runtime>/` 保存独立环境及版本清单，`jobs/<阶段>/<批次>/` 对应一次验收。批次内的 `scripts/` 存作业和核验代码，`inputs/` 存原件与独立参考，`logs/` 存调度和浏览器日志，`results/` 存工作台记录、哈希和结论，`results/screenshots/` 存浏览器实拍，`bin/` 和 `work/` 分别存编译产物和临时文件。作业号写入批次根目录的 `slurm-job-id.txt`。本次从 SSH 登录节点显式提交，计算和浏览器均在调度分配的节点上执行。
 
 ## 版本与交付
 
