@@ -143,3 +143,9 @@ Slurm 作业 `1024` 使用 V100 节点的一张 Tesla V100-SXM2-16GB 完成验�
 | 原件与结果 | trajectory.lammpstrj 原件可下载；parameters.json、result.json、details.json 和运行清单共同保留来源关系 |
 
 新增 6 项针对性算法测试通过，未重复运行历史测试集。合成输出用于功能演示，以上 D 是所选窗口拟合值。记录与截图：V100 /home/v100/projects/catalysis-agent/jobs/md/20261118-curves-msd-01/。操作与数据契约见 [MD 输出分析](md-analysis.md)。RVE/FEM 未迁移，A5/A7 现场签收仍等脱敏数据。
+
+## 第 6 项与第 3 项：LAMMPS 调度与恢复 · 2026-11-18
+
+V100 受管工作台以合成结构和参数完成浏览器操作；接口使用项目权限、审计和人工确认。作业 1036 在工作台确认后提交，展示实时步数，生成检查点后通过页面取消。重复点击计划创建及确认各产生一次请求和一次提交尝试。恢复计划需另行人工确认，不自动提交。
+
+首次恢复作业 1037 实际执行至目标步，但因续跑不足轨迹采样间隔未产生轨迹，运行器报失败；记录保留。提交 57b4b5b 修正为恢复起点输出一帧，工作台再次确认恢复作业 1038，从 checkpoint.8750000 执行 41 步至 8750041，Slurm COMPLETED、ExitCode 0:0，运行器 completed，页面下载轨迹首步 8750000。使用 CPU 分区、1 核、0 GPU；站点 GPU 可执行程序尚待配置。验收记录和截图在 /home/v100/projects/catalysis-agent/jobs/md/20261118-slurm-control-01/；无重复质量或哈希校验。A5/A7 现场数据签收仍待脱敏数据。
