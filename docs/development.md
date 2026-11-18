@@ -41,3 +41,5 @@ V100 的项目根目录为 `~/projects/catalysis-agent/`。`releases/<commit>/` 
 A5 已完成原始轨迹与网格文件的导入及合成样本工作台验收。LAMMPS 文本轨迹按步号和原子 ID 对照坐标、单位与周期边界。VTU 按网格关联、分量和物理坐标取样，分别对照点场和单元场的独立参考。两条链路的原件、参考和参数均可从结果追溯。下一次 A5 签收使用内网现场导出的脱敏原件和独立参考。轨迹之外的 thermo 时序文件尚待接入。现场项目隔离、恢复演练、算力与授权盘点按[验收表](acceptance.md)跟踪。
 
 V100 上的后续开发使用 `~/projects/catalysis-agent/repositories/catalysis-agent.git` 作为项目 Git 仓库，日常工作树位于 `development/catalysis-agent/`。通过内网 SSH 提交调度作业。发布代码、批次数据和回执分别归入 `releases/`、`jobs/` 和对应批次的 `results/`，测试和验算在已分配的集群资源上执行。
+
+A7 的项目备份、独立恢复、只读历史审批核对及科学复算已在 V100 完成合成项目验收。恢复副本使用原项目名，科学复算另写空目录。操作命令见 [A7 项目备份、恢复与复算](file-analysis.md#a7-项目备份恢复与复算)，验收批次见[验收表](acceptance.md)。
