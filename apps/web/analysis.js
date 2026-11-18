@@ -7,6 +7,18 @@
     diffusivity: { name: "质量传递 · 扩散系数", field: "浓度", flux: "质量通量", coefficient: "扩散系数" },
     viscosity: { name: "动量传递 · 动力黏度", field: "流向速度", flux: "剪切分量", coefficient: "动力黏度" },
   };
+  const transportAssumptions = new Map([
+    ["The coordinate, field and signed flux or stress describe the same selected component and samples.",
+      "位置坐标、场量和带符号的通量或应力须对应同一选定分量和同一批样本。"],
+    ["Ordinary least squares fits field versus mean sampled position with an intercept and equal weight per occupied position or bin.",
+      "采用含截距的普通最小二乘法，拟合场量与平均采样位置的关系。每个有采样的位置或分箱权重相同。"],
+    ["Each selected source row contributes equally to mean flux or stress, including samples at repeated positions. Time selects rows and supplies no additional weight.",
+      "计算平均通量或应力时，入选数据行等权，包括同一位置的重复采样。时间只用于筛选数据行。"],
+    ["The selected samples represent a linear transport regime. The input flux or stress is already intensive and normalized for the intended geometry and transport direction.",
+      "假定入选样本处于线性输运区间。输入的通量或应力应为强度量，并已按所选几何和输运方向完成归一化。"],
+    ["The driving option records what the experiment imposed. The fit and mean use the observed columns in either case.",
+      "驱动条件仅记录实验施加的是梯度还是通量。两种情况下，拟合和求平均均使用所选观测列。"],
+  ]);
   const transportUnitExamples = {
     position: ["m", "nm", "angstrom"],
     time: ["s", "ns", "ps", "fs", "step"],
@@ -381,7 +393,7 @@ function renderMdAnalysis(run, target) {
     }
     if (Array.isArray(result.assumptions) && result.assumptions.length) {
       const notes = element("ul", null, "ca-transport-notes");
-      for (const note of result.assumptions) notes.append(element("li", note));
+      for (const note of result.assumptions) notes.append(element("li", transportAssumptions.get(note) ?? note));
       section.append(notes);
     }
 
