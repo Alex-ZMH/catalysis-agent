@@ -137,6 +137,21 @@ def _read_private(path):
         return stream.read()
 
 
+def _check_receipt(record, path, plan_id, digest, job_id, result, *, archived=False):
+    if not isinstance(record, dict) or type(record.get("uid")) is not int or record["uid"] < 0:
+        raise RuntimeError(f"Invalid Slurm receipt owner: {path.name}")
+    expected = dict(plan_id=plan_id, digest=digest, marker=plan_id, job_id=job_id)
+    if not archived:
+        expected["uid"] = os.getuid()
+    if any(record.get(k) != v for k, v in expected.items()):
+        raise RuntimeError(f"Invalid Slurm receipt: {path.name}")
+    if result and (
+        not isinstance(record.get("device"), str) or "V100" not in record["device"]
+        or record.get("values") != [i * i + 7 for i in range(32)]
+    ):
+        raise RuntimeError(f"Invalid GPU result: {path.name}")
+
+
 def _atomic_write(path, content):
     with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as output:
         temporary = Path(output.name)
@@ -215,6 +230,19 @@ class SyntheticSlurm:
         _atomic_write(directory / f"submitted-{job_id}.json", json.dumps(receipt))
         return job_id
 
+    def result_path(self, plan):
+        plan_id, _, _, _ = _validate(plan)
+        job_id = plan.get("job_id")
+        if not isinstance(job_id, str) or not _JOB_ID.fullmatch(job_id):
+            raise FileNotFoundError("No recorded Slurm job")
+        return self._directory(plan_id) / f"result-{job_id}.json"
+
+    def result_receipt(self, plan, *, archived=False):
+        path = self.result_path(plan)
+        content = _read_private(path)
+        _check_receipt(json.loads(content), path, plan["id"], plan["digest"], plan["job_id"], True, archived=archived)
+        return path.name, content.encode("utf-8")
+
     def lookup(self, plan):
         plan_id, digest, _, _ = _validate(plan)
         directory = self._directory(plan_id)
@@ -225,15 +253,7 @@ class SyntheticSlurm:
             if not match:
                 continue
             record = json.loads(_read_private(path))
-            expected = dict(plan_id=plan_id, digest=digest, marker=plan_id,
-                            uid=os.getuid(), job_id=match[2])
-            if not isinstance(record, dict) or any(record.get(k) != v for k, v in expected.items()):
-                raise RuntimeError(f"Invalid Slurm receipt: {path.name}")
-            if match[1] == "result" and (
-                not isinstance(record.get("device"), str) or "V100" not in record["device"]
-                or record.get("values") != [i * i + 7 for i in range(32)]
-            ):
-                raise RuntimeError(f"Invalid GPU result: {path.name}")
+            _check_receipt(record, path, plan_id, digest, match[2], match[1] == "result")
             receipts.add(match[2])
 
         matches = set()

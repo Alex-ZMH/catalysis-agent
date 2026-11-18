@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
 from jsonschema import ValidationError
-from packages.agent.approvals import ApprovalStore
+from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import Workspace, json_bytes
 from scripts.frontend_baseline import git as baseline_git, verify as verify_baseline
@@ -136,6 +136,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._post(path)
             else:
                 self._get(path)
+        except RestoredApprovalError as error:
+            self._send(409, json_bytes({"error": str(error)}))
         except FileNotFoundError:
             self._send(404, json_bytes({"error": "记录或资源不存在。"}))
         except ValidationError as error:
@@ -164,8 +166,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         store = self.server.workspace
         if path == "/api/plans":
-            self._send(200, json_bytes({"plans": self.server.approvals.list(),
-                                        "synthetic_submission": self.server.synthetic_submission}))
+            approvals = self.server.approvals
+            plans = approvals.list()
+            listing = {"plans": plans, "synthetic_submission": self.server.synthetic_submission}
+            if approvals.recovery:
+                listing["recovery"] = approvals.recovery
+                listing["receipt_plan_ids"] = [
+                    plan["id"] for plan in plans
+                    if plan["job_id"] and plan["spec"]["workflow"] == "synthetic-v100"
+                    and self.server.slurm_receipts.result_path(plan).is_file()
+                ]
+            self._send(200, json_bytes(listing))
+            return
+        receipt = re.fullmatch(r"/api/plans/(plan-[0-9a-f]{64})/receipt", path)
+        if receipt:
+            plan = self.server.approvals.get(receipt[1])
+            if plan["spec"]["workflow"] != "synthetic-v100" or not plan["job_id"]:
+                raise FileNotFoundError()
+            filename, data = self.server.slurm_receipts.result_receipt(
+                plan, archived=self.server.approvals.recovery is not None
+            )
+            self._send(200, data, filename=filename)
             return
         plan = PLAN_PATH.fullmatch(path)
         if plan and plan[2] is None:
@@ -209,6 +230,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("计划请求需要 JSON 对象。")
         approvals = self.server.approvals
         if path == "/api/plans":
+            if approvals.recovery:
+                raise RestoredApprovalError("恢复副本中的审批记录仅供核对。")
             record = approvals.create(plan_spec(self.server.workspace, body,
                                                 self.server.synthetic_submission))
         elif match[2] == "confirm":
@@ -268,11 +291,13 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
     assets = static_files()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     store = Workspace(data_dir, project, operator, commit)
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     approvals_dir = store.runs.parent / "approvals"
-    scheduler = SyntheticSlurm(approvals_dir / "slurm") if synthetic_submission else None
-    server.approvals = ApprovalStore(data_dir, project, operator, scheduler)
-    server.synthetic_submission = synthetic_submission
+    receipt_reader = SyntheticSlurm(approvals_dir / "slurm")
+    approvals = ApprovalStore(data_dir, project, operator, receipt_reader if synthetic_submission else None)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.slurm_receipts = receipt_reader
+    server.approvals = approvals
+    server.synthetic_submission = approvals.scheduler is not None
     server.workspace, server.assets = store, assets
     server.upload_limit = max_upload_mib * 1024 * 1024
     server.analysis_slots = threading.BoundedSemaphore(workers)

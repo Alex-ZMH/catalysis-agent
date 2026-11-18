@@ -15,15 +15,32 @@ def _json_bytes(value):
                       separators=(",", ":")).encode("utf-8")
 
 
+class RestoredApprovalError(ValueError):
+    """Historical approvals on a restored copy cannot dispatch or change state."""
+
+
 class ApprovalStore:
     def __init__(self, directory, project, operator, scheduler=None):
         for name in (project, operator):
             if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}", name):
                 raise ValueError("Invalid project or operator ID")
         base = Path(directory).resolve() / "projects" / project / "approvals"
-        base.mkdir(parents=True, exist_ok=True)
         self.path = base / "approvals.sqlite3"
-        self.project, self.operator, self.scheduler = project, operator, scheduler
+        self.project, self.operator = project, operator
+        self.recovery = None
+        marker = base.parent / "restored-project.json"
+        if marker.is_symlink():
+            raise ValueError("Invalid project recovery marker")
+        if marker.exists():
+            evidence = json.loads(marker.read_bytes())
+            if (not isinstance(evidence, dict) or evidence.get("project") != project
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("archive_sha256")))):
+                raise ValueError("Invalid project recovery marker")
+            self.recovery = {"project": project, "archive_sha256": evidence["archive_sha256"]}
+            self.scheduler = None
+            return
+        base.mkdir(parents=True, exist_ok=True)
+        self.scheduler = scheduler
         with self._write() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS approvals (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -31,6 +48,8 @@ class ApprovalStore:
             )""")
 
     def _connect(self):
+        if self.recovery:
+            return sqlite3.connect(self.path.as_uri() + "?mode=ro&immutable=1", uri=True, timeout=10)
         return sqlite3.connect(self.path, timeout=10)
 
     @contextmanager
@@ -52,6 +71,7 @@ class ApprovalStore:
         return json.loads(row[0])
 
     def create(self, spec):
+        self._require_writable()
         identity = hashlib.sha256(_json_bytes([self.project, spec])).hexdigest()
         record = dict(id="plan-" + identity, digest=identity, state="pending",
                       spec=spec, job_id=None, attempts=0, events=[])
@@ -61,12 +81,20 @@ class ApprovalStore:
                        (record["id"], _json_bytes(record)))
             return self._get(db, record["id"])
 
+    def _require_writable(self):
+        if self.recovery:
+            raise RestoredApprovalError("恢复副本中的审批记录仅供核对。")
+
     def list(self):
+        if self.recovery and not self.path.exists():
+            return []
         with closing(self._connect()) as db:
             return [json.loads(row[0]) for row in
                     db.execute("SELECT record FROM approvals ORDER BY rowid")]
 
     def get(self, plan_id):
+        if self.recovery and not self.path.exists():
+            raise FileNotFoundError("Unknown approval plan")
         with closing(self._connect()) as db:
             return self._get(db, plan_id)
 
@@ -89,6 +117,7 @@ class ApprovalStore:
             raise ValueError("Approval digest mismatch")
         if previous["state"] not in {"pending", "retryable"}:
             return previous
+        self._require_writable()
         expected = previous["state"], previous["attempts"]
         state, message = "confirmed", "Confirmed plan"
         if previous["spec"]["mode"] != "plan-only":
@@ -129,6 +158,7 @@ class ApprovalStore:
         plan = self.get(plan_id)
         if plan["state"] not in {"submitting", "unknown"}:
             return plan
+        self._require_writable()
         self._require_scheduler(plan["spec"])
         attempt = plan["attempts"]
         try:

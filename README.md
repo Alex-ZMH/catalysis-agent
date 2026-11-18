@@ -10,7 +10,7 @@
 py -3.13 -m apps.server --data-dir D:/research-data/catalysis-agent --project local
 ```
 
-在浏览器打开 `http://127.0.0.1:8771/#studio`，点击页眉的「科学分析」。使用流程、支持的输入、模型尺寸规则和浏览器验收见 [文件分析工作台](docs/file-analysis.md)。以下命令独立核验基线和契约。
+在浏览器打开 `http://127.0.0.1:8771/#studio`，点击页眉的「科学分析」。使用流程、支持的输入、模型尺寸规则和浏览器验收见 [文件分析工作台](docs/file-analysis.md)。项目备份、独立恢复和复算使用同一指南中的 [A7 操作步骤](docs/file-analysis.md#a7-项目备份恢复与复算)。以下命令独立核验基线和契约。
 
 ```powershell
 py -3.13 scripts/frontend_baseline.py

@@ -405,6 +405,8 @@
     let runs = new Map();
     let records = new Map();
     let syntheticSubmission = false;
+    let recovery = null;
+    let receiptPlans = new Set();
     let ready = false;
     let busy = false;
 
@@ -427,7 +429,8 @@
         gpus.value = 1;
         if (minutes.valueAsNumber > 2) minutes.value = 2;
       }
-      create.disabled = busy || !ready || !workflow.value;
+      form.hidden = !!recovery;
+      create.disabled = !!recovery || busy || !ready || !workflow.value;
       find("#a6-preview").textContent = run
         ? `${originLabel[run.origin] ?? run.origin} · ${synthetic ? "确认后将尝试提交 v100 合成作业" : "确认仅记录计划"}`
         : "";
@@ -442,8 +445,15 @@
       confirm.hidden = state !== "pending";
       retry.hidden = state !== "retryable";
       reconcile.hidden = !["submitting", "unknown"].includes(state);
+      const notice = find("#a7-recovery");
+      notice.hidden = !recovery;
+      notice.textContent = recovery ? `恢复副本 · 审批记录只读 · 备份 SHA-256 ${recovery.archive_sha256}` : "";
+      const receipt = find("#a7-receipt");
+      receipt.hidden = !receiptPlans.has(record?.id);
+      if (receipt.hidden) receipt.removeAttribute("href");
+      else receipt.href = `/api/plans/${encodeURIComponent(record.id)}/receipt`;
       const schedulerUnavailable = record?.spec.mode === "slurm-synthetic" && !syntheticSubmission;
-      for (const button of [confirm, retry, reconcile]) button.disabled = busy || !ready || schedulerUnavailable;
+      for (const button of [confirm, retry, reconcile]) button.disabled = !!recovery || busy || !ready || schedulerUnavailable;
       if (!record) return;
       const spec = record.spec;
       find("#a6-spec").replaceChildren(metrics([
@@ -457,7 +467,7 @@
         ? (syntheticSubmission && spec.origin === "synthetic" ? "人工确认后由 Slurm 调度合成 V100 作业" : "当前服务未启用此计划的合成作业提交")
         : "仅记录计划";
       for (const [key, value] of Object.entries({
-        "source-sha": spec.source_sha256, mode, state: stateLabels[state] ?? state,
+        "source-sha": spec.source_sha256, mode: recovery ? "查看归档审批" : mode, state: stateLabels[state] ?? state,
         attempts: record.attempts, "job-id": record.job_id ?? "—",
       })) find(`#a6-${key}`).textContent = value;
       find("#a6-events").replaceChildren(...(record.events ?? []).map(event => {
@@ -475,6 +485,8 @@
 
     function updatePlans(data) {
       syntheticSubmission = data.synthetic_submission === true;
+      recovery = data.recovery ?? null;
+      receiptPlans = new Set(data.receipt_plan_ids ?? []);
       records = new Map(data.plans.map(record => [record.id, record]));
       renderPlans(plans.value);
       ready = true;
@@ -682,6 +694,7 @@
       </section>
       <section id="a6-panel" aria-labelledby="a6-title">
         <div class="ca-heading"><h2 id="a6-title">重计算计划</h2><button id="a6-refresh" type="button">刷新计划和输入</button></div>
+        <p id="a7-recovery" class="ca-muted" hidden></p>
         <form id="a6-form">
           <label>已有运行<select id="a6-run" name="run_id" required><option value="">选择已有运行</option></select></label>
           <label>工作流程<select id="a6-workflow" name="workflow" required disabled></select></label>
@@ -703,7 +716,7 @@
             <div><dt>执行方式</dt><dd id="a6-mode"></dd></div>
             <div><dt>状态</dt><dd id="a6-state"></dd></div>
             <div><dt>尝试次数</dt><dd id="a6-attempts"></dd></div>
-            <div><dt>作业号</dt><dd id="a6-job-id"></dd></div>
+            <div><dt>作业号</dt><dd id="a6-job-id"></dd><dd><a id="a7-receipt" download hidden>下载作业计算回执</a></dd></div>
           </dl>
           <div class="ca-a6-actions">
             <button id="a6-confirm" type="button" hidden>确认计划</button>

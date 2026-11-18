@@ -85,3 +85,22 @@ VASP 弛豫、MD 和设备仿真在当前版本保存人工确认记录。常规
 | 已关联 Slurm 作业 | 查看作业号和审计记录，计算完成情况以 Slurm 终态和 GPU 结果为准 |
 
 在同一项目内，相同输入、流程、资源和执行策略获得同一计划 ID。工作台在调用调度器前把提交权写入 SQLite。Slurm 无法与 SQLite 一起提交事务，因此中断可能留下尚无作业号的计划；此时按既有标记查证，重复确认不能再次派发。人工确认的持久化记录在项目数据目录的 `approvals/approvals.sqlite3`，调度脚本、日志和回执在 `approvals/slurm/<plan_id>/`。保留并共同备份这两个位置，使用本机支持锁和持久刷盘的文件系统。确认人取自服务启动时指定的操作员，生产账户授权仍按 A1 签收。
+
+## A7 项目备份、恢复与复算
+
+在 V100 的版本化代码目录使用项目 Python 环境。备份前关闭该项目工作台，等仍在写回执或日志的作业结束。一个归档对应一个项目，包含科学工件、运行历史、当时的审批数据库和项目内已有的调度证据。归档外的现场参考、软件环境和集群控制器日志按各自位置保管。
+
+```bash
+python -m packages.recovery backup --data-dir "$SOURCE_ROOT" --project "$PROJECT" \
+  --archive "$BACKUP_DIR/project.zip" > "$EVIDENCE/backup.json"
+
+python -m packages.recovery restore --archive "$BACKUP_DIR/project.zip" \
+  --sha256 "$RETAINED_SHA256" --data-dir "$RESTORE_ROOT" > "$EVIDENCE/restore.json"
+
+python -m packages.recovery replay --data-dir "$RESTORE_ROOT" --project "$PROJECT" \
+  --destination "$REPLAY_ROOT" > "$EVIDENCE/replay.json"
+```
+
+先准备私有的备份目录和证据目录。将第一条命令返回的 `archive_sha256` 单独留存，作为恢复命令的 `RETAINED_SHA256`。选择独立的恢复数据根，其中该项目的位置必须空缺。复算使用第三个空目录，根据已保存的输入、参考文件和参数重新运行科学分析。报告列出原运行与复算运行对应的代码版本和工件哈希。用命令退出状态和逐项报告共同判断结果。
+
+使用 `python -m apps.server --data-dir "$RESTORE_ROOT" --project "$PROJECT" --operator "$REVIEWER"` 打开恢复副本。在「科学分析」的运行历史中选择原运行，核对清单中的参数、输入和结果工件，下载原文件核对 SHA-256。在「重计算计划」中选择历史审批，核对来源运行、文件哈希、操作员、事件和原 Slurm 作业号。已归档的合成 GPU 计算回执可以从作业号下方下载。恢复副本的审批历史只读，包含恢复前仍在待确认、可重试或待核对状态的记录。科学复算只生成独立运行记录。
