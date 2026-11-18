@@ -77,7 +77,7 @@
   }
 
   async function request(path, body, kind, headers, signal) {
-    const options = { mode: "same-origin", cache: "no-store", signal };
+    const options = { cache: "no-store", signal };
     const response = await fetch(path, body ? { ...options, method: "POST", body, headers } : options);
     if (response.ok && (path === "/api/login" || path === "/api/logout")) return;
     const payload = kind === "md"
