@@ -28,6 +28,8 @@
 }
 #studio .ca-panel :is(label, fieldset, button.ca-primary) { margin-top: 10px; }
 #studio .ca-panel label { display: grid; gap: 4px; min-width: 0; }
+#studio .ca-panel label[hidden] { display: none; }
+#studio .ca-panel .ca-a5-check { display: flex; align-items: center; gap: 8px; }
 #studio .ca-panel fieldset {
   min-width: 0;
   margin-inline: 0;
@@ -82,6 +84,29 @@
 #studio .ca-artifacts li { padding-block: 7px; border-top: 1px solid var(--wb-line); }
 #studio #analysis-history-list button { width: 100%; text-align: start; }
 #studio #analysis-history-list button[aria-current] { border-color: var(--wb-accent); }
+
+#studio .ca-a5-result { margin: 12px 0 18px; }
+#studio .ca-panel .ca-a5-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin: 10px 0;
+}
+#studio .ca-a5-bar label { margin: 0; }
+#studio .ca-a5-bar input { width: 8rem; }
+#studio .ca-a5-bar [role="status"] { align-self: center; color: var(--wb-muted); }
+#studio .ca-a5-pages { margin-block: 12px; }
+#studio .ca-a5-scroll { overflow-x: auto; }
+#studio .ca-a5-scroll table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+#studio .ca-a5-scroll caption { margin-bottom: 6px; text-align: start; font-weight: 600; }
+#studio .ca-a5-scroll :is(th, td) {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--wb-line);
+  text-align: start;
+}
+#studio .ca-a5-scroll th { background: var(--wb-panel); }
+#studio .ca-a5-scroll td { white-space: nowrap; }
 
 @media (max-width: 520px) {
   #studio .wb-header:has(#analysis-nav) { flex-wrap: wrap; gap: 6px 10px; }

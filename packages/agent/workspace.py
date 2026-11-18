@@ -65,15 +65,25 @@ class Workspace:
         finally:
             temp_name.unlink(missing_ok=True)
 
-    def analyze(self, kind, filename, content, options, origin):
-        from packages.science import fit, vasp
-        if kind not in {"adsorption", "kinetics"} or origin not in {"synthetic", "research"}:
+    def analyze(self, kind, filename, content, options, origin, reference=None):
+        if kind not in OPERATIONS or origin not in {"synthetic", "research"}:
             raise ValueError("请选择分析类型和数据来源。")
         if not isinstance(options, dict) or not content:
             raise ValueError("请提供非空文件和 JSON 对象形式的参数。")
-        if not filename or len(filename) > 255 or any(ord(c) < 32 or c in "/\\" for c in filename):
-            raise ValueError("上传文件名无效。")
+        importing = kind in {"md", "equipment"}
+        uploads = [(filename, content)]
+        if reference is not None:
+            if not importing:
+                raise ValueError("只有轨迹与设备场导入接受独立参考文件。")
+            uploads.append(reference)
+        for name, data in uploads:
+            if not name or len(name) > 255 or any(ord(c) < 32 or c in "/\\" for c in name):
+                raise ValueError("上传文件名无效。")
+            if not data:
+                raise ValueError("上传文件为空。")
         config = dict(kind=kind, options=options, origin=origin)
+        if reference is not None:
+            config["reference"] = {"filename": reference[0], "sha256": digest(reference[1])}
         run_id = "run-" + digest(json_bytes([self.project, self.operator, self.commit,
                                             filename, digest(content), config]))
         if (self.runs / run_id).exists():
@@ -92,18 +102,38 @@ class Workspace:
             return artifact
 
         raw_id = add(filename, content, "source")
+
         def register(name, data):
             return add(name, data, "derived", [raw_id])
 
-        adapter = vasp if kind == "adsorption" else fit
-        normalized, result, details = adapter.analyze(filename, content, options, origin, raw_id, register)
-        validator = adsorption if kind == "adsorption" else kinetics
-        validator.validate_result(result, normalized)
-        normalized_bytes, result_bytes = json_bytes(normalized), json_bytes(result)
-        norm_id = add("normalized.json", normalized_bytes, "derived", sorted(records))
+        normalized = normalized_bytes = None
+        ref_id = None
+        if importing:
+            from packages.science import field_probe, lammps
+            reference_input = None
+            input_ids = [raw_id]
+            if reference is not None:
+                ref_name, ref_bytes = reference
+                if ref_bytes == content:
+                    raise ValueError("参考文件必须独立于数据文件。")
+                ref_id = add(ref_name, ref_bytes, "source")
+                input_ids.append(ref_id)
+                reference_input = (ref_name, ref_bytes, ref_id)
+            reader = lammps if kind == "md" else field_probe
+            result, details = reader.read_import(filename, content, options, raw_id, reference_input)
+        else:
+            from packages.science import fit, vasp
+            adapter = vasp if kind == "adsorption" else fit
+            normalized, result, details = adapter.analyze(filename, content, options, origin, raw_id, register)
+            validator = adsorption if kind == "adsorption" else kinetics
+            validator.validate_result(result, normalized)
+            normalized_bytes = json_bytes(normalized)
+            input_ids = [add("normalized.json", normalized_bytes, "derived", sorted(records))]
         cfg_id = add("parameters.json", json_bytes(config), "parameters")
-        out_id = add("result.json", result_bytes, "derived", [norm_id, cfg_id])
-        detail_id = add("details.json", json_bytes(details), "derived", [norm_id, cfg_id])
+        result_bytes = json_bytes(result)
+        parents = [*input_ids, cfg_id]
+        out_id = add("result.json", result_bytes, "derived", parents)
+        detail_id = add("details.json", json_bytes(details), "derived", parents)
         flags = set(result.get("warnings", []))
         quality = "review" if flags else "accepted"
         if kind == "adsorption":
@@ -116,12 +146,15 @@ class Workspace:
         manifest = dict(schema_version="1.0.0", project_id=self.project, run_id=run_id,
                         operator_id=self.operator, recorded_at=now, operation=OPERATIONS[kind],
                         method={"id": kind, "version": "0.1.0"}, code_commit=self.commit,
-                        profile="intranet-v1", parameters_artifact=cfg_id, inputs=[norm_id],
+                        profile="intranet-v1", parameters_artifact=cfg_id, inputs=input_ids,
                         outputs=[out_id, detail_id], artifacts=list(records.values()),
                         quality=quality, quality_flags=sorted(flags))
         link_result(kind, result, result_bytes, manifest, normalized, normalized_bytes)
         summary = dict(id=run_id, kind=kind, origin=origin, created_at=now, filename=filename)
-        index = dict(names=names, raw=raw_id, input=norm_id, result=out_id, details=detail_id)
+        index = dict(names=names, raw=raw_id, input=cfg_id if importing else input_ids[0],
+                     result=out_id, details=detail_id)
+        if ref_id is not None:
+            index["reference_id"] = ref_id
         # Publish only after both scientific and provenance checks have succeeded.
         for checksum, data in contents.items():
             self._store(checksum, data)
@@ -178,5 +211,6 @@ class Workspace:
         values = {name: json.loads(self._bytes(records[index[name]]))
                   for name in ("input", "result", "details")}
         return dict(**summary, **values, artifacts=public, raw_id=index["raw"],
+                    reference_id=index.get("reference_id"),
                     manifest_url=base + "/manifest", quality=manifest["quality"],
                     quality_flags=manifest["quality_flags"])

@@ -1,7 +1,8 @@
 (() => {
   "use strict";
 
-  const kindLabel = { adsorption: "VASP 吸附能", kinetics: "动力学拟合" };
+  const kindLabel = { adsorption: "VASP 吸附能", kinetics: "动力学拟合", md: "LAMMPS 轨迹", equipment: "VTU 场与线剖面" };
+  const rawKind = kind => kind === "md" || kind === "equipment";
   const originLabel = { synthetic: "合成数据", research: "研究数据" };
   const modelLabel = { arrhenius_known_k: "Arrhenius（已测速率常数）", initial_rate_power_law: "初始速率幂律" };
   const units = {
@@ -48,9 +49,22 @@
     return link;
   }
 
-  async function request(path, body) {
+  const integerIdentifiers = new Set(["id", "timestep", "step_origin"]);
+
+  function preserveIdentifier(key, value, context) {
+    if (integerIdentifiers.has(key) && Number.isInteger(value) && !Number.isSafeInteger(value)
+        && /^-?\d+$/.test(context?.source ?? "")) {
+      return context.source;
+    }
+    return value;
+  }
+
+  async function request(path, body, kind) {
     const response = await fetch(path, body ? { method: "POST", body } : {});
-    const data = await response.json().catch(() => null);
+    const payload = kind === "md"
+      ? response.text().then(source => JSON.parse(source, preserveIdentifier))
+      : response.json();
+    const data = await payload.catch(() => null);
     if (!response.ok || !data) {
       throw new Error(data?.error || `服务返回异常响应（HTTP ${response.status}）`);
     }
@@ -71,6 +85,196 @@
       list.append(item);
     }
     return list;
+  }
+
+  const formatNumber = value => Number.isFinite(value) ? String(Number(value.toPrecision(9))) : "—";
+  const vector = values => values?.map(formatNumber).join(", ") ?? "—";
+  const exactIdentifier = value => typeof value === "string" || Number.isSafeInteger(value) ? String(value) : null;
+  const identifierLabel = value => exactIdentifier(value) ?? "超出浏览器整数精度";
+
+  function frameTime(frame, time) {
+    if (time?.mode !== "constant_dt") return frame.time;
+    const step = exactIdentifier(frame.timestep);
+    const origin = exactIdentifier(time.step_origin);
+    if (step === null || origin === null) return null;
+    return time.time_origin + Number(BigInt(step) - BigInt(origin)) * time.dt;
+  }
+
+  function pager(id, label, count, pageSize, render) {
+    const container = element("div", null, "ca-a5-pages");
+    container.id = id;
+    const bar = element("div", null, "ca-a5-bar");
+    const body = element("div");
+    const pages = Math.max(1, Math.ceil(count / pageSize));
+    const back = element("button", "上一页");
+    const next = element("button", "下一页");
+    back.type = next.type = "button";
+    const page = element("input");
+    page.type = "number";
+    page.min = 1;
+    page.max = pages;
+    const caption = element("label", label);
+    caption.append(page);
+    const status = element("span");
+    status.setAttribute("role", "status");
+    let current = 0;
+    function show(index) {
+      current = Math.min(pages - 1, Math.max(0, index));
+      const start = current * pageSize;
+      page.value = current + 1;
+      back.disabled = current === 0;
+      next.disabled = current + 1 === pages;
+      status.textContent = `${current + 1} / ${pages} 页 · ${count} 条`;
+      body.replaceChildren();
+      render(body, start, Math.min(start + pageSize, count));
+    }
+    back.addEventListener("click", () => show(current - 1));
+    next.addEventListener("click", () => show(current + 1));
+    page.addEventListener("change", () => show(Number.isInteger(page.valueAsNumber) ? page.valueAsNumber - 1 : current));
+    bar.append(back, caption, next, status);
+    if (pages > 1) container.append(bar);
+    container.append(body);
+    show(0);
+    return { container, show };
+  }
+
+  function dataTable(caption, headers, rows) {
+    const wrapper = element("div", null, "ca-a5-scroll");
+    const table = element("table");
+    const head = element("thead");
+    const headings = element("tr");
+    for (const title of headers) {
+      const cell = element("th", title);
+      cell.scope = "col";
+      headings.append(cell);
+    }
+    head.append(headings);
+    const body = element("tbody");
+    for (const row of rows) {
+      const tr = element("tr");
+      for (const value of row) tr.append(element("td", value));
+      body.append(tr);
+    }
+    table.append(element("caption", caption), head, body);
+    wrapper.append(table);
+    return wrapper;
+  }
+
+  function renderMD(run, target) {
+    const dump = run.result?.dump;
+    if (!dump) return;
+    const frames = dump.frames;
+    const checks = run.details?.frame_checks ?? [];
+    let compared = 0;
+    let maxError = 0;
+    for (const check of checks) {
+      if (Number.isFinite(check.max_abs_error)) {
+        compared++;
+        maxError = Math.max(maxError, check.max_abs_error);
+      }
+    }
+    const time = dump.time;
+    target.append(metrics([
+      ["轨迹帧数", frames.length],
+      ["坐标单位", dump.length_unit],
+      ["坐标表示", dump.coordinate_mode === "wrapped" ? "周期镜像坐标（wrapped）" : "展开坐标（unwrapped）"],
+      ["时间模式", time?.mode === "constant_dt" ? `固定步长 ${time.dt} ${time.unit}`
+        : time?.mode === "explicit" ? `显式时间（${time.unit}）` : "未指定物理时间"],
+      ["参考比较帧数", `${compared} / ${frames.length}`],
+      ["全帧最大绝对误差", compared ? `${formatNumber(maxError)} ${dump.length_unit}` : "未评估"],
+    ]));
+    const stepForm = element("form", null, "ca-a5-bar");
+    stepForm.id = "analysis-md-step-form";
+    const step = element("input");
+    step.id = "analysis-md-step";
+    step.type = "text";
+    step.inputMode = "numeric";
+    step.required = true;
+    const stepLabel = element("label", "按时间步定位");
+    stepLabel.append(step);
+    const go = element("button", "查看帧");
+    go.type = "submit";
+    const stepStatus = element("span");
+    stepStatus.setAttribute("role", "status");
+    stepForm.append(stepLabel, go, stepStatus);
+    const frameView = pager("analysis-md-frames", "帧序号", frames.length, 1, (body, index) => {
+      const frame = frames[index];
+      if (!frame) return;
+      step.value = exactIdentifier(frame.timestep) ?? "";
+      stepStatus.textContent = "";
+      const physicalTime = frameTime(frame, time);
+      body.append(element("h4", `时间步 ${identifierLabel(frame.timestep)}`), metrics([
+        ["原子数", frame.atoms.length],
+        ["物理时间", Number.isFinite(physicalTime) ? `${formatNumber(physicalTime)} ${time.unit}` : "未报告"],
+        [`盒原点（${dump.length_unit}）`, vector(frame.cell.origin)],
+        ["周期边界 a / b / c", frame.cell.periodic.map(flag => flag ? "周期" : "非周期").join(" / ")],
+        ...frame.cell.vectors.map((value, i) => [`盒矢量 ${"abc"[i]}（${dump.length_unit}）`, vector(value)]),
+      ]));
+      const atoms = pager("analysis-md-atoms", "坐标页", frame.atoms.length, 50, (output, start, end) => {
+        output.append(dataTable("原子坐标", ["原子 ID", ...["X", "Y", "Z"].map(axis => `${axis}（${dump.length_unit}）`)],
+          frame.atoms.slice(start, end).map(atom => [identifierLabel(atom.id), ...atom.position.map(formatNumber)])));
+      });
+      body.append(atoms.container);
+    });
+    stepForm.addEventListener("submit", event => {
+      event.preventDefault();
+      const query = step.value.trim().replace(/^0+(?=\d)/, "");
+      const index = /^\d+$/.test(query) ? frames.findIndex(frame => exactIdentifier(frame.timestep) === query) : -1;
+      if (index < 0) stepStatus.textContent = frames.some(frame => exactIdentifier(frame.timestep) === null)
+        ? "未找到可精确匹配的时间步。部分步号超出浏览器整数精度，可按帧序号浏览。"
+        : "轨迹中没有该时间步。";
+      else frameView.show(index);
+    });
+    target.append(stepForm, frameView.container);
+    if (checks.length) target.append(pager("analysis-md-frame-checks", "比较结果页", checks.length, 50, (body, start, end) => {
+      body.append(dataTable("逐帧参考比较", ["时间步", "原子数", `最大绝对误差（${dump.length_unit}）`],
+        checks.slice(start, end).map(check => [identifierLabel(check.timestep), check.atom_count, formatNumber(check.max_abs_error)])));
+    }).container);
+  }
+
+  function renderEquipment(run, target) {
+    const result = run.result ?? {};
+    const fields = result.fields ?? [];
+    const profiles = result.line_profiles ?? [];
+    const association = value => ({ point: "点数据（point）", cell: "单元数据（cell）" })[value] ?? value;
+    target.append(metrics([
+      ["网格长度单位", result.length_unit], ["网格点数", result.points?.length],
+      ["网格单元数", result.cells?.length], ["字段数", fields.length], ["线剖面数", profiles.length],
+    ]));
+    if (fields.length) target.append(pager("analysis-equipment-fields", "字段页", fields.length, 30, (body, start, end) => {
+      body.append(dataTable("网格字段", ["位置", "字段", "分量数", "单位"],
+        fields.slice(start, end).map(field => [association(field.association), field.name, field.components, field.unit])));
+    }).container);
+    if (!profiles.length) {
+      target.append(element("p", "本次运行没有线剖面。"));
+      return;
+    }
+    target.append(pager("analysis-equipment-profiles", "剖面序号", profiles.length, 1, (body, index) => {
+      const profile = profiles[index];
+      const { field, reference, samples } = profile;
+      const artifact = reference && run.artifacts?.find(item => item.id === reference.reference_artifact_id);
+      const selection = field.selection.kind === "magnitude" ? "向量模长" : `分量 ${field.selection.index}`;
+      body.append(element("h4", `线剖面 ${index + 1}`), metrics([
+        ["位置", association(field.association)], ["字段", field.name], ["取值方式", selection], ["字段单位", profile.unit],
+        [`A（${result.length_unit}）`, vector(profile.a)], [`B（${result.length_unit}）`, vector(profile.b)],
+        ["参考比较", reference ? "独立参考" : "未提供参考"],
+        ...(reference ? [
+          ["绝对容差", `${formatNumber(reference.absolute_tolerance)} ${reference.unit}`],
+          ["相对容差", formatNumber(reference.relative_tolerance ?? 0)],
+        ] : []),
+      ]));
+      if (artifact) body.append(downloadLink(artifact.url, "下载该剖面的参考证据"));
+      body.append(pager("analysis-equipment-samples", "采样页", samples.length, 50, (output, start, end) => {
+        output.append(dataTable("沿线采样", [
+          "样本", "沿线分数", `值（${profile.unit}）`, `参考值（${profile.unit}）`, `绝对误差（${profile.unit}）`, "缺失掩码",
+        ], samples.slice(start, end).map(({ fraction, value }, i) => {
+          const ref = reference?.values[start + i];
+          const error = Number.isFinite(value) && Number.isFinite(ref) ? Math.abs(value - ref) : null;
+          return [start + i + 1, formatNumber(fraction), formatNumber(value), formatNumber(ref), formatNumber(error),
+            value == null ? "缺失" : "有效"];
+        })));
+      }).container);
+    }).container);
   }
 
   function renderAdsorption(run, target) {
@@ -149,15 +353,32 @@
       }
       if (result.parameter_uncertainty?.reason) target.append(element("p", `参数不确定性：${result.parameter_uncertainty.reason}`));
     }
-    target.append(details("完整科学结果", result), details("规范化输入与分析详情", { input: run.input, details: run.details }));
+    if (rawKind(run.kind)) {
+      const science = element("div", null, "ca-a5-result");
+      science.id = `analysis-${run.kind}-result`;
+      const compared = run.kind === "md"
+        ? (run.details?.frame_checks ?? []).some(check => Number.isFinite(check.max_abs_error))
+        : (result.line_profiles ?? []).some(profile => profile.reference);
+      const comparison = element("p", compared ? "已与独立参考比较" : "仅导入 · 未与独立参考比较", "ca-origin");
+      comparison.id = "analysis-a5-comparison";
+      science.append(comparison);
+      if (run.kind === "md") renderMD(run, science);
+      else renderEquipment(run, science);
+      target.append(science);
+    } else {
+      target.append(details("完整科学结果", result), details("规范化输入与分析详情", { input: run.input, details: run.details }));
+    }
     target.append(element("h4", "来源与下载"));
     if (run.manifest_url) target.append(downloadLink(run.manifest_url, "下载运行清单"));
     const artifacts = element("ul", null, "ca-artifacts");
     for (const artifact of run.artifacts ?? []) {
       const row = element("li");
+      const label = artifact.id === run.raw_id ? "原始上传"
+        : artifact.id === run.reference_id ? "独立参考证据" : translate(artifact.role);
+      if (artifact.id === run.reference_id) row.id = "analysis-a5-reference-artifact";
       row.append(
         downloadLink(artifact.url, artifact.name ?? artifact.id),
-        element("small", `${artifact.id === run.raw_id ? "原始上传" : translate(artifact.role)} · ${artifact.size_bytes} 字节 · ${artifact.id}`),
+        element("small", `${label} · ${artifact.size_bytes} 字节 · ${artifact.id}`),
         element("code", `SHA-256 ${artifact.sha256}`),
       );
       if (artifact.parents?.length) row.append(element("small", `上游工件：${artifact.parents.join("、")}`));
@@ -178,12 +399,15 @@
         <a href="/guide/vasp" target="_blank" rel="noopener">VASP 吸附指南</a>
         <a href="/guide/kinetics" target="_blank" rel="noopener">动力学指南</a>
         <a href="/guide/cell" target="_blank" rel="noopener">晶胞指南</a>
+        <a href="/guide/md" target="_blank" rel="noopener">LAMMPS 指南</a>
+        <a href="/guide/equipment" target="_blank" rel="noopener">VTU 指南</a>
       </nav>
       <form id="analysis-form">
         <h2>上传分析数据</h2>
         <div class="ca-grid">
           <label>分析类型<select id="analysis-kind" name="kind">
             <option value="adsorption">VASP 吸附能</option><option value="kinetics">动力学拟合</option>
+            <option value="md">LAMMPS 轨迹</option><option value="equipment">VTU 场与线剖面</option>
           </select></label>
           <label>数据来源<select id="analysis-origin" name="origin">
             <option value="synthetic" selected>合成数据</option><option value="research">研究数据</option>
@@ -191,6 +415,38 @@
         </div>
         <label>上传文件<input id="analysis-upload" name="file" type="file" required></label>
         <p id="analysis-file-hint" class="ca-muted"></p>
+        <fieldset id="analysis-a5" hidden disabled>
+          <legend>原始文件配置</legend>
+          <div class="ca-grid">
+            <label>坐标长度单位<input id="analysis-length-unit" name="length_unit" placeholder="留空读取原文件单位"></label>
+            <label>独立参考证据（可选）<input id="analysis-reference" name="reference" type="file" accept=".json,application/json"></label>
+          </div>
+          <p id="analysis-a5-hint" class="ca-muted"></p>
+        </fieldset>
+        <fieldset id="analysis-equipment-line" hidden disabled>
+          <legend>VTU 单条线剖面</legend>
+          <label class="ca-a5-check"><input id="analysis-equipment-line-enabled" type="checkbox">配置单条线</label>
+          <fieldset id="analysis-equipment-line-fields" hidden disabled>
+            <legend>采样设置</legend>
+            <div class="ca-grid ca-axes">
+              ${["a", "b"].flatMap(end => ["x", "y", "z"].map(axis =>
+                `<label>${end.toUpperCase()} · ${axis.toUpperCase()}<input id="analysis-line-${end}-${axis}" name="line_${end}_${axis}" type="number" step="any" required></label>`
+              )).join("")}
+            </div>
+            <div class="ca-grid">
+              <label>字段位置<select id="analysis-line-association" name="line_association">
+                <option value="point">点数据（point）</option><option value="cell">单元数据（cell）</option>
+              </select></label>
+              <label>字段名称<input id="analysis-line-field" name="line_field" required></label>
+              <label>字段单位（可读取原文件）<input id="analysis-line-unit" name="line_unit"></label>
+              <label>取值方式<select id="analysis-line-selection" name="line_selection">
+                <option value="component">分量</option><option value="magnitude">向量模长</option>
+              </select></label>
+              <label id="analysis-line-component-label">分量索引（从 0 开始）<input id="analysis-line-component" name="line_component" type="number" min="0" step="1" value="0" required></label>
+              <label>采样数量（含端点）<input id="analysis-line-count" name="line_count" type="number" min="2" step="1" required></label>
+            </div>
+          </fieldset>
+        </fieldset>
         <fieldset id="analysis-vasp">
           <legend>VASP 晶胞各轴上限（Å，含真空）</legend>
           <div class="ca-grid ca-axes">
@@ -234,7 +490,7 @@
             </label>
           </div>
         </fieldset>
-        <details>
+        <details id="analysis-advanced">
           <summary>高级配置</summary>
           <label>选项 JSON<textarea id="analysis-options" rows="4" placeholder="{}"></textarea></label>
           <p class="ca-muted">同名高级选项覆盖表单值。配置字段见对应分析指南。</p>
@@ -296,6 +552,13 @@
     const results = find("#analysis-results");
     const status = find("#analysis-status");
     const upload = find("#analysis-upload");
+    const reference = find("#analysis-reference");
+    const advanced = find("#analysis-options");
+    const line = find("#analysis-equipment-line");
+    const lineEnabled = find("#analysis-equipment-line-enabled");
+    const lineFields = find("#analysis-equipment-line-fields");
+    const drafts = new Map();
+    let activeKind = fields.kind.value;
     let viewVersion = 0;
     let manifestVersion = 0;
 
@@ -317,29 +580,71 @@
     }
 
     function syncKind() {
-      const kinetics = fields.kind.value === "kinetics";
+      const kind = fields.kind.value;
+      const kinetics = kind === "kinetics";
+      const raw = rawKind(kind);
+      if (activeKind !== kind) {
+        drafts.set(activeKind, {
+          options: advanced.value, lengthUnit: fields.length_unit.value, reference: reference.files[0],
+        });
+        const draft = drafts.get(kind);
+        advanced.value = draft?.options ?? "";
+        fields.length_unit.value = draft?.lengthUnit ?? "";
+        const files = new DataTransfer();
+        if (draft?.reference) files.items.add(draft.reference);
+        reference.files = files.files;
+        activeKind = kind;
+      }
       const section = find("#analysis-kinetics");
       section.hidden = section.disabled = !kinetics;
       const vasp = find("#analysis-vasp");
-      vasp.hidden = vasp.disabled = kinetics;
-      upload.accept = kinetics ? ".csv,.xlsx" : ".zip";
-      find("#analysis-file-hint").textContent = kinetics ? "支持 CSV 或 XLSX。" : "上传含 study.json 和 vasprun.xml 的 VASP ZIP。";
-      find("#analysis-options").placeholder = kinetics
-        ? '{"acceptance":{"max_train_log_rmse":0.2,"max_holdout_log_rmse":0.3}}'
-        : '{"cell_limits_A":[50,50,50]}';
+      vasp.hidden = vasp.disabled = kind !== "adsorption";
+      const rawSection = find("#analysis-a5");
+      rawSection.hidden = rawSection.disabled = !raw;
+      upload.accept = { adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
+      find("#analysis-file-hint").textContent = {
+        adsorption: "上传含 study.json 和 vasprun.xml 的 VASP ZIP。",
+        kinetics: "支持 CSV 或 XLSX。",
+        md: "上传 LAMMPS 文本轨迹（如 .lammpstrj 或 .dump）。",
+        equipment: "上传 VTK XML 非结构网格文件（.vtu）。",
+      }[kind];
+      find("#analysis-a5-hint").textContent = kind === "md"
+        ? "长度单位留空时读取轨迹的 ITEM: UNITS。可在高级配置填写 dt、time_unit、step_origin 和 time_origin。"
+        : "长度和字段单位可读取 VTU 的 Unit / Units。原文件缺少字段单位时，可在高级配置按 point / cell 填写 field_units。上传参考后默认按参考定义采样，高级配置 profiles 可指定多条剖面。";
+      advanced.placeholder = {
+        kinetics: '{"acceptance":{"max_train_log_rmse":0.2,"max_holdout_log_rmse":0.3}}',
+        adsorption: '{"cell_limits_A":[50,50,50]}',
+      }[kind] ?? "";
+      syncLine();
       syncSheet();
+    }
+
+    function syncLine() {
+      let advancedProfiles = false;
+      if (fields.kind.value === "equipment" && advanced.value.trim()) {
+        try {
+          advancedProfiles = Object.hasOwn(jsonObject(advanced.value, "高级配置"), "profiles");
+        } catch {
+          // Invalid JSON is reported on submit.
+        }
+      }
+      line.hidden = line.disabled = fields.kind.value !== "equipment" || !!reference.files[0] || advancedProfiles;
+      lineFields.hidden = lineFields.disabled = line.disabled || !lineEnabled.checked;
+      const component = fields.line_selection.value === "component";
+      find("#analysis-line-component-label").hidden = fields.line_component.disabled = !component;
     }
 
     function syncSheet() {
       fields.sheet.disabled = !/\.xlsx$/i.test(upload.files[0]?.name ?? "");
     }
 
-    function jsonObject(value, label) {
+    function jsonObject(value, label, reviver) {
       let parsed;
       try {
-        parsed = JSON.parse(value);
-      } catch {
-        throw new Error(`${label}必须是有效的 JSON 对象。`);
+        parsed = JSON.parse(value, reviver);
+      } catch (error) {
+        if (error instanceof SyntaxError) throw new Error(`${label}必须是有效的 JSON 对象。`);
+        throw error;
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error(`${label}必须是 JSON 对象。`);
@@ -348,11 +653,11 @@
     }
 
     function runOptions() {
-      const advanced = find("#analysis-options").value.trim();
+      const extra = advanced.value.trim();
       const options = {};
       if (fields.kind.value === "adsorption") {
         options.cell_limits_A = ["a", "b", "c"].map(axis => fields[`vasp_limit_${axis}`].valueAsNumber);
-      } else {
+      } else if (fields.kind.value === "kinetics") {
         for (const key of ["model", "response_unit", "temperature_unit", "sheet", "batch_id"]) {
           if (!fields[key].disabled && fields[key].value.trim()) options[key] = fields[key].value;
         }
@@ -372,16 +677,43 @@
           }
         }
         if (Object.keys(columns).length) options.columns = columns;
+      } else if (fields.length_unit.value.trim()) {
+        options.length_unit = fields.length_unit.value.trim();
       }
-      return { ...options, ...(advanced ? jsonObject(advanced, "高级配置") : {}) };
+      const preserveStepOrigin = (key, value, context) => {
+        if (key !== "step_origin" || typeof value !== "number" || Number.isSafeInteger(value)) return value;
+        const exact = preserveIdentifier(key, value, context);
+        if (typeof exact === "string" && typeof JSON.rawJSON === "function") return JSON.rawJSON(exact);
+        throw new Error("step_origin 需要精确整数。当前浏览器无法原样提交该值。");
+      };
+      const config = extra ? jsonObject(extra, "高级配置", fields.kind.value === "md" ? preserveStepOrigin : undefined) : {};
+      const merged = { ...options, ...config };
+      if (!lineFields.disabled && !Object.hasOwn(config, "profiles")) {
+        const association = fields.line_association.value;
+        const name = fields.line_field.value.trim();
+        if (!name) throw new Error("请填写线剖面的字段名称。");
+        const kind = fields.line_selection.value;
+        const coordinates = end => ["x", "y", "z"].map(axis => fields[`line_${end}_${axis}`].valueAsNumber);
+        merged.profiles = [{
+          a: coordinates("a"), b: coordinates("b"),
+          field: { association, name, selection: kind === "component" ? { kind, index: fields.line_component.valueAsNumber } : { kind } },
+          count: fields.line_count.valueAsNumber,
+        }];
+        const unit = fields.line_unit.value.trim();
+        if (unit) {
+          const fieldUnits = config.field_units ?? {};
+          merged.field_units = { ...fieldUnits, [association]: { [name]: unit, ...fieldUnits[association] } };
+        }
+      }
+      return merged;
     }
 
-    async function openRun(id, button) {
+    async function openRun(id, kind, button) {
       const version = ++viewVersion;
       results.setAttribute("aria-busy", "true");
       setStatus(status, "正在读取历史运行…");
       try {
-        const run = await request(`/api/runs/${encodeURIComponent(id)}`);
+        const run = await request(`/api/runs/${encodeURIComponent(id)}`, undefined, kind);
         if (version !== viewVersion) return;
         renderRun(run, results);
         results.hidden = false;
@@ -411,7 +743,7 @@
           button.type = "button";
           button.dataset.runId = run.id;
           button.append(element("small", `${originLabel[run.origin] ?? run.origin} · ${run.created_at}`));
-          button.addEventListener("click", () => openRun(run.id, button));
+          button.addEventListener("click", () => openRun(run.id, run.kind, button));
           row.append(button);
           list.append(row);
         }
@@ -423,6 +755,10 @@
 
     fields.model.addEventListener("change", syncModel);
     fields.kind.addEventListener("change", syncKind);
+    reference.addEventListener("change", syncLine);
+    advanced.addEventListener("input", syncLine);
+    lineEnabled.addEventListener("change", syncLine);
+    fields.line_selection.addEventListener("change", syncLine);
     upload.addEventListener("change", syncSheet);
     syncModel();
     syncKind();
@@ -444,6 +780,7 @@
       body.set("kind", fields.kind.value);
       body.set("origin", fields.origin.value);
       body.set("options", JSON.stringify(options));
+      if (rawKind(fields.kind.value) && reference.files[0]) body.set("reference", reference.files[0]);
       const version = ++viewVersion;
       submit.disabled = true;
       results.replaceChildren();
@@ -451,7 +788,7 @@
       results.setAttribute("aria-busy", "true");
       setStatus(status, `正在分析${originLabel[fields.origin.value]}…`);
       try {
-        const run = await request("/api/runs", body);
+        const run = await request("/api/runs", body, body.get("kind"));
         if (version === viewVersion) {
           renderRun(run, results);
           results.hidden = false;

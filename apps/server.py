@@ -48,11 +48,11 @@ def form_fields(headers, data):
     for part in message.iter_parts():
         key = part.get_param("name", header="Content-Disposition")
         if (part.is_multipart() or part.defects or part.get_content_disposition() != "form-data"
-                or key in result or key not in {"file", "options", "kind", "origin"}
+                or key in result or key not in {"file", "reference", "options", "kind", "origin"}
                 or part.get("Content-Transfer-Encoding") is not None):
             raise ValueError("上传字段无效或重复。")
         value = part.get_payload(decode=True)
-        if key == "file":
+        if key in {"file", "reference"}:
             result[key] = (part.get_filename() or "", value)
         else:
             if len(value) > 256 * 1024:
@@ -129,7 +129,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, self.server.assets[path], mime)
             return
         guides = {"/guide/vasp": "vasp-import.md", "/guide/kinetics": "kinetics-import.md",
-                  "/guide/cell": "cell.md"}
+                  "/guide/cell": "cell.md", "/guide/md": "lammps-import.md",
+                  "/guide/equipment": "equipment-import.md", "/guide/vtu-format": "vtu-format.md"}
         if path in guides:
             self._send(200, (ROOT / "docs" / guides[path]).read_bytes(), "text/plain; charset=utf-8")
             return
@@ -168,10 +169,12 @@ class Handler(BaseHTTPRequestHandler):
             name, blob = fields["file"]
             if path == "/api/cell":
                 from packages.science.cell import plan_from_poscar
+                if "reference" in fields:
+                    raise ValueError("晶胞预检只接收一个 POSCAR。")
                 result = plan_from_poscar(blob, fields["options"])
             else:
                 result = self.server.workspace.analyze(fields.get("kind"), name, blob, fields["options"],
-                                                       fields.get("origin"))
+                                                       fields.get("origin"), fields.get("reference"))
             self._send(200, json_bytes(result))
         finally:
             self.server.analysis_slots.release()

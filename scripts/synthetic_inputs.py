@@ -13,13 +13,26 @@ from test_vasp_import import demo as vasp_demo
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
-    out = parser.parse_args().directory.resolve()
+    parser.add_argument("--suite", choices=("analysis", "a5"), default="analysis")
+    args = parser.parse_args()
+    out = args.directory.resolve()
     if any((p / ".git").exists() for p in (out, *out.parents)):
         parser.error("Choose a directory outside Git")
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
         parser.error("Choose a new or empty directory")
     cases = {}
+    if args.suite == "a5":
+        from test_a5_workbench import CASES
+        for kind, factory in CASES.items():
+            name, data, options, oracle = factory()
+            ref = f"{kind}-independent.json"
+            (out / name).write_bytes(data)
+            (out / ref).write_text(json.dumps(oracle, indent=2), encoding="utf-8")
+            cases[kind] = dict(filename=name, options=options, reference=ref)
+        (out / "cases.json").write_text(json.dumps(cases, indent=2), encoding="utf-8")
+        print(out)
+        return
     for key, factory in (("vasp", vasp_demo), ("csv", csv_demo), ("xlsx", demo_xlsx)):
         filename, content, options = factory()
         (out / filename).write_bytes(content)

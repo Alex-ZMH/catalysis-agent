@@ -35,5 +35,9 @@
 !/docs/kinetics-import.md
 !/docs/vasp-import.md
 !/docs/file-analysis.md
+!/docs/lammps-import.md
+!/docs/equipment-import.md
+!/docs/vtu-format.md
 !/tests/browser_workbench.cjs
+!/tests/browser_a5.cjs
 !/scripts/synthetic_inputs.py
