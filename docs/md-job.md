@@ -44,3 +44,5 @@ python -m packages.md_run --job-bundle "$JOB_BUNDLE" \
 ```
 
 独立进入时，也可使用 `--structure` 和 `--config` 直接生成并运行。EAM 势文件随 `--potential` 提供。执行端依据结构与配置生成输入脚本。 `run.json` 记录输入、参数、版本、代码提交、Slurm 作业号、结束状态和产物。 `log.lammps` 为原生输出， `thermo.jsonl` 提取其热力学记录。 `trajectory.lammpstrj` 可从工作台 LAMMPS 轨迹入口读取。 `final.data` 和 `final.restart` 保存在本次运行。可使用场地的 Slurm 命令停止作业，工作台运行和恢复按钮列在总任务清单。
+
+V100 首次链路演练对应 Slurm 作业 `1033`，使用 LAMMPS 22 Jul 2025 Update 2。40 步合成 NVE 运行生成 5 帧原生轨迹和 5 条热力学记录。工作台从轨迹文件读回步号 0、10、20、30、40。批次目录为 `/home/v100/projects/catalysis-agent/jobs/md/20261118-lammps-run-01/`。
