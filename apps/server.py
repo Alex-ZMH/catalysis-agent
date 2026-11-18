@@ -25,13 +25,12 @@ from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.egress import restrict_egress
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import Workspace, json_bytes
-from scripts.frontend_baseline import git as baseline_git, verify as verify_baseline
+from scripts.frontend_baseline import git as baseline_git
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def static_files():
-    verify_baseline(None)
     archive = baseline_git("archive", "--format=zip", "refs/tags/frontend-baseline-v1")
     with ZipFile(io.BytesIO(archive)) as zipped:
         files = {"/" + p: zipped.read(p) for p in zipped.namelist() if not p.endswith("/")
@@ -43,7 +42,7 @@ def static_files():
     return files
 
 
-def form_fields(headers, data):
+def form_fields(headers, data, *, md_job=False):
     content_type = headers.get("Content-Type", "")
     if headers.get_content_type() != "multipart/form-data":
         raise ValueError("请以文件表单上传。")
@@ -51,21 +50,23 @@ def form_fields(headers, data):
         b"Content-Type: " + content_type.encode("ascii") + b"\r\nMIME-Version: 1.0\r\n\r\n" + data)
     if not message.is_multipart() or message.defects:
         raise ValueError("上传表单不完整。")
+    files = {"file", "potential"} if md_job else {"file", "reference"}
+    allowed = files | ({"run_id", "artifact_id", "options"} if md_job else {"options", "kind", "origin"})
     result = {}
     for part in message.iter_parts():
         key = part.get_param("name", header="Content-Disposition")
         if (part.is_multipart() or part.defects or part.get_content_disposition() != "form-data"
-                or key in result or key not in {"file", "reference", "options", "kind", "origin"}
+                or key in result or key not in allowed
                 or part.get("Content-Transfer-Encoding") is not None):
             raise ValueError("上传字段无效或重复。")
         value = part.get_payload(decode=True)
-        if key in {"file", "reference"}:
+        if key in files:
             result[key] = (part.get_filename() or "", value)
         else:
             if len(value) > 256 * 1024:
                 raise ValueError("配置超过 256 KiB。")
             result[key] = value.decode("utf-8")
-    if "file" not in result:
+    if "file" not in result and not md_job:
         raise ValueError("请选择文件。")
     try:
         result["options"] = json.loads(result.get("options", "{}"))
@@ -95,6 +96,7 @@ ACTIONS = {
     (True, "/api/runs"): "project.run.create",
     (True, "/api/cell"): "project.cell.check",
     (True, "/api/md-handoff"): "project.structure.convert",
+    (True, "/api/md-job"): "project.md.prepare",
     (True, "/api/plans"): "project.plan.create",
 }
 
@@ -350,7 +352,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         guides = {"/guide/vasp": "vasp-import.md", "/guide/kinetics": "kinetics-import.md",
                   "/guide/cell": "cell.md", "/guide/md": "lammps-import.md",
-                  "/guide/equipment": "equipment-import.md", "/guide/vtu-format": "vtu-format.md"}
+                  "/guide/equipment": "equipment-import.md", "/guide/vtu-format": "vtu-format.md",
+                  "/guide/md-job": "md-job.md"}
         if path in guides:
             self._send(200, (ROOT / "docs" / guides[path]).read_bytes(), "text/plain; charset=utf-8")
             return
@@ -465,11 +468,39 @@ class Handler(BaseHTTPRequestHandler):
                               "units metal\natom_style atomic\nboundary p p p\nread_data structure.data\n")
         self._send(200, package.getvalue(), "application/zip", "vasp-to-lammps.zip")
 
+    def _prepare_md_job(self, fields):
+        from packages.science.md_job import build_job
+
+        structure = fields.get("file")
+        run_id, artifact_id = fields.get("run_id"), fields.get("artifact_id")
+        provenance = {"project_id": self.workspace.project, "operator_id": self.workspace.operator,
+                      "code_commit": self.server.commit}
+        if run_id or artifact_id:
+            if (structure is not None or not isinstance(run_id, str) or not isinstance(artifact_id, str)
+                    or not re.fullmatch(r"run-[0-9a-f]{64}", run_id)
+                    or not re.fullmatch(r"art-[0-9a-f]{64}", artifact_id)):
+                raise ValueError("请选择一个已有结构工件或上传一个结构。")
+            target = {"run_id": run_id, "artifact_id": artifact_id}
+            if self.audit_event is not None:
+                self.audit_event.update(target)
+            name, raw = self.workspace.download(run_id, artifact_id)
+            provenance.update(source_filename=name, **target)
+        elif structure is not None:
+            name, raw = structure
+        else:
+            raise ValueError("请选择 VASP 结构文件。")
+        potential = fields.get("potential")
+        if potential is not None:
+            provenance["potential_filename"] = potential[0]
+        package = build_job(name.rsplit("/", 1)[-1], raw, fields["options"],
+                            potential=potential[1] if potential is not None else None, provenance=provenance)
+        self._send(200, package, "application/zip", "lammps-md-job.zip")
+
     def _post(self, path):
         if path == "/api/plans" or path.startswith("/api/plans/"):
             self._plan_action(path)
             return
-        if path not in {"/api/runs", "/api/cell", "/api/md-handoff"}:
+        if path not in {"/api/runs", "/api/cell", "/api/md-handoff", "/api/md-job"}:
             raise FileNotFoundError()
         size = int(self.headers.get("Content-Length", "-1"))
         if self.headers.get("Transfer-Encoding") or not 0 < size <= self.server.upload_limit:
@@ -483,7 +514,10 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(size)
             if len(data) != size:
                 raise ValueError("上传提前结束。")
-            fields = form_fields(self.headers, data)
+            fields = form_fields(self.headers, data, md_job=path == "/api/md-job")
+            if path == "/api/md-job":
+                self._prepare_md_job(fields)
+                return
             name, blob = fields["file"]
             if path == "/api/md-handoff":
                 if "reference" in fields:

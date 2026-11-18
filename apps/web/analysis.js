@@ -308,8 +308,17 @@
       const artifact = artifacts.get(structure.blob_id);
       if (!artifact) continue;
       const label = [roles[structure.role], structure.site || structure.logical_id || structure.file].filter(Boolean).join(" · ");
-      list.append(element("li"));
-      list.lastElementChild.append(downloadLink(artifact.url + "/md-data", label + " · 下载 LAMMPS 结构包"));
+      const row = element("li");
+      row.append(downloadLink(artifact.url + "/md-data", label + " · 下载 LAMMPS 结构包"));
+      if (target.closest("#a1-workspace")?.dataset.role !== "viewer") {
+        const plan = element("button", "配置 MD 作业");
+        plan.type = "button";
+        plan.dataset.mdRun = run.id;
+        plan.dataset.mdArtifact = artifact.id;
+        plan.dataset.mdLabel = label;
+        row.append(plan);
+      }
+      list.append(row);
     }
     if (list.childElementCount) target.append(element("h4", "DFT → MD 结构交接"), list);
   }
@@ -826,6 +835,19 @@
           <p id="md-handoff-status" role="status"></p>
         </form>
       </details>
+      <details class="ca-cell" id="md-job">
+        <summary>LAMMPS 作业配置</summary>
+        <form id="md-job-form">
+          <p id="md-job-source" class="ca-muted">上传结构，或从 VASP 结果选择结构。</p>
+          <label>独立结构<input id="md-job-file" type="file"></label>
+          <label>作业配置 JSON<textarea id="md-job-config" rows="9" required></textarea></label>
+          <label>EAM 势函数文件<input id="md-job-potential" type="file"></label>
+          <p class="ca-muted">支持显式 LJ 参数和 EAM/alloy 文件。输入步长、温度、系综与三轴边界，下载作业包后在 V100 运行。</p>
+          <a href="/guide/md-job" target="_blank" rel="noopener">配置字段与运行命令</a>
+          <button id="md-job-submit" class="ca-primary" type="submit">生成 LAMMPS 作业包</button>
+          <p id="md-job-status" role="status"></p>
+        </form>
+      </details>
       <section id="a1-backups" aria-labelledby="a1-backup-title" hidden>
         <div class="ca-heading"><h2 id="a1-backup-title">项目备份</h2><button id="a1-backup-refresh" type="button">刷新备份</button></div>
         <p id="a1-backup-status" role="status"></p>
@@ -974,7 +996,8 @@
       return data;
     };
     workbench.hidden = false;
-    find("#md-handoff").hidden = allowed.get(project) === "viewer";
+    workbench.dataset.role = allowed.get(project);
+    find("#md-handoff").hidden = find("#md-job").hidden = allowed.get(project) === "viewer";
     mountWorkspace(panel, workbench, projectRequest, controller.signal);
     if (allowed.get(project) === "admin") {
       const backups = find("#a1-backups");
@@ -1009,6 +1032,70 @@
     }
   }
 
+  async function exportZip(path, body, signal, filename) {
+    const response = await fetch(projectPath(path), { method: "POST", body, signal });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.error ?? `HTTP ${response.status}`);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = element("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function mountMdJob(find, signal) {
+    const section = find("#md-job");
+    const form = find("#md-job-form");
+    const file = find("#md-job-file");
+    const status = find("#md-job-status");
+    const source = find("#md-job-source");
+    let selected;
+    find("#analysis-results").addEventListener("click", event => {
+      const button = event.target.closest("button[data-md-run]");
+      if (!button || section.hidden) return;
+      selected = { run_id: button.dataset.mdRun, artifact_id: button.dataset.mdArtifact };
+      file.value = "";
+      source.textContent = button.dataset.mdLabel;
+      section.open = true;
+      section.scrollIntoView({ block: "start" });
+      find("#md-job-config").focus({ preventScroll: true });
+    });
+    file.addEventListener("change", () => {
+      if (file.files[0]) {
+        selected = undefined;
+        source.textContent = file.files[0].name;
+      }
+    });
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = find("#md-job-submit");
+      submit.disabled = true;
+      setStatus(status, "正在生成 LAMMPS 作业包…");
+      try {
+        const body = new FormData();
+        if (selected) {
+          for (const [key, value] of Object.entries(selected)) body.set(key, value);
+        } else if (file.files[0]) {
+          body.set("file", file.files[0]);
+        } else {
+          throw new Error("请先选择结构。");
+        }
+        const potential = find("#md-job-potential").files[0];
+        if (potential) body.set("potential", potential);
+        body.set("options", find("#md-job-config").value);
+        await exportZip("/api/md-job", body, signal, "lammps-md-job.zip");
+        setStatus(status, "已生成 LAMMPS 作业包。");
+      } catch (error) {
+        if (!signal?.aborted) setStatus(status, error.message, true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
   function mountWorkspace(panel, workbench, request, signal) {
     const find = selector => workbench.querySelector(selector);
     const handoff = find("#md-handoff-form");
@@ -1019,19 +1106,7 @@
       handoffSubmit.disabled = true;
       setStatus(handoffStatus, "正在转换结构…");
       try {
-        const response = await fetch(projectPath("/api/md-handoff"), {
-          method: "POST", body: new FormData(handoff), signal,
-        });
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          throw new Error(error?.error ?? `HTTP ${response.status}`);
-        }
-        const url = URL.createObjectURL(await response.blob());
-        const link = element("a");
-        link.href = url;
-        link.download = "vasp-to-lammps.zip";
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        await exportZip("/api/md-handoff", new FormData(handoff), signal, "vasp-to-lammps.zip");
         setStatus(handoffStatus, "已生成 LAMMPS 结构包。");
       } catch (error) {
         if (!signal?.aborted) setStatus(handoffStatus, error.message, true);
@@ -1039,6 +1114,7 @@
         handoffSubmit.disabled = false;
       }
     });
+    mountMdJob(find, signal);
     const refreshPlans = mountPlans(find, panel, request, signal);
     const form = find("#analysis-form");
     const fields = form.elements;

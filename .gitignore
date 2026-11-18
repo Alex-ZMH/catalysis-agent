@@ -41,3 +41,7 @@
 !/tests/browser_workbench.cjs
 !/tests/browser_a5.cjs
 !/scripts/synthetic_inputs.py
+
+!/docs/roadmap.md
+!/docs/mlcc-migration.md
+!/docs/md-job.md
