@@ -198,7 +198,7 @@ function lineChart(title, series, xLabel, yLabel) {
     if (xmin === xmax) { xmin -= 0.5; xmax += 0.5; }
     const pad = (ymax - ymin) * 0.08 || Math.abs(ymax) * 0.02 || 1;
     ymin -= pad; ymax += pad;
-    const px = x => 82 + (x-xmin)/(xmax-xmin)*510;
+    const px = x => 104 + (x-xmin)/(xmax-xmin)*488;
     const py = y => 192 - (y-ymin)/(ymax-ymin)*158;
     const node = (tag, attrs, text) => {
       const n = document.createElementNS(ns, tag);
@@ -206,15 +206,18 @@ function lineChart(title, series, xLabel, yLabel) {
       if (text != null) n.textContent = text;
       svg.append(n); return n;
     };
-    const tick = n => Math.abs(n) !== 0 && (Math.abs(n)<0.001 || Math.abs(n)>99999) ? n.toExponential(2) : String(Number(n.toPrecision(4)));
+    const tick = (n, span) => {
+      const precision = Math.min(13, Math.max(4, Math.ceil(Math.log10(Math.max(Math.abs(n), span)/span))+3));
+      return String(Number(n.toPrecision(precision)));
+    };
     for (let i=0;i<=4;i++) {
       const x = xmin+(xmax-xmin)*i/4, y=ymin+(ymax-ymin)*i/4;
-      node("line",{x1:82,y1:py(y),x2:592,y2:py(y),stroke:"currentColor",opacity:0.13});
-      node("text",{x:74,y:py(y)+4,"text-anchor":"end",fill:"currentColor","font-size":11},tick(y));
-      node("text",{x:px(x),y:211,"text-anchor":"middle",fill:"currentColor","font-size":11},tick(x));
+      node("line",{x1:104,y1:py(y),x2:592,y2:py(y),stroke:"currentColor",opacity:0.13});
+      node("text",{x:96,y:py(y)+4,"text-anchor":"end",fill:"currentColor","font-size":16},tick(y,ymax-ymin));
+      node("text",{x:px(x),y:211,"text-anchor":"middle",fill:"currentColor","font-size":16},tick(x,xmax-xmin));
     }
-    node("text",{x:337,y:237,"text-anchor":"middle",fill:"currentColor","font-size":12},xLabel);
-    node("text",{x:82,y:17,fill:"currentColor","font-size":12},yLabel);
+    node("text",{x:337,y:237,"text-anchor":"middle",fill:"currentColor","font-size":17},xLabel);
+    node("text",{x:104,y:17,fill:"currentColor","font-size":17},yLabel);
     const colors = ["#69d9c0","#ffbe78","#7cafff","#e7a3dd"];
     series.forEach((s,i) => {
       const color=s.color||colors[i%colors.length];
