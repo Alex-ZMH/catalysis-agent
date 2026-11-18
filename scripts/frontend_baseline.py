@@ -15,9 +15,12 @@ TAG = "frontend-baseline-v1"
 
 def git(*args):
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    # Older cluster Git releases lack the --no-lazy-fetch command-line option.
+    # An empty transport allowlist also blocks promisor fetches on those releases.
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_ALLOW_PROTOCOL="", GIT_NO_LAZY_FETCH="1")
     result = subprocess.run(
-        ["git", "--no-replace-objects", "--no-lazy-fetch", "-C", str(ROOT), *args],
+        ["git", "--no-replace-objects", "-C", str(ROOT), *args],
         capture_output=True, env=env,
     )
     if result.returncode:

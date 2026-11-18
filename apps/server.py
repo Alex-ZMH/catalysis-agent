@@ -17,15 +17,14 @@ from zipfile import BadZipFile, ZipFile
 
 from jsonschema import ValidationError
 from packages.agent.workspace import Workspace, json_bytes
-from scripts.frontend_baseline import verify as verify_baseline
+from scripts.frontend_baseline import git as baseline_git, verify as verify_baseline
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def static_files():
     verify_baseline(None)
-    archive = subprocess.check_output(["git", "--no-lazy-fetch", "archive", "--format=zip",
-                                       "refs/tags/frontend-baseline-v1"], cwd=ROOT)
+    archive = baseline_git("archive", "--format=zip", "refs/tags/frontend-baseline-v1")
     with ZipFile(io.BytesIO(archive)) as zipped:
         files = {"/" + p: zipped.read(p) for p in zipped.namelist() if not p.endswith("/")
                  and not p.startswith("tools/")}
