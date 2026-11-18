@@ -17,7 +17,7 @@ async function main() {
     args: ["--disable-background-networking", "--disable-component-update", "--disable-sync"] });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 1080 }, acceptDownloads: true });
-    const errors = [], external = [], runs = [], rejected = [];
+    const errors = [], external = [], runs = [], discrepancies = [];
     page.on("pageerror", err => errors.push(err.message));
     await page.route("**/*", route => {
       if (new URL(route.request().url()).origin === base) return route.continue();
@@ -138,21 +138,24 @@ async function main() {
       }));
       runs.push({ kind, id: run.id, code_commit: manifest.code_commit, manifest: run.manifest_url, sourceHashes, comparisons });
       const bad = structuredClone(oracle);
-      const historyBeforeError = await listRuns();
+      const historyBeforeMismatch = await listRuns();
       if (kind === "md") bad.frames[1].atoms[0].position[0] += 1;
       else bad.profiles[0].values[2] += 1;
       // The production form clears successful file selections. Re-select both original and modified reference.
       await page.setInputFiles("#analysis-upload", path.join(directory, filename));
       await page.setInputFiles("#analysis-reference", { name: "mismatch.json", mimeType: "application/json",
         buffer: Buffer.from(JSON.stringify(bad)) });
-      const failure = await submit();
-      const problem = (await failure.json()).error;
-      assert.equal(failure.status(), 400, problem);
+      const compared = await submit();
+      const published = await compared.json();
+      assert.equal(compared.status(), 200);
+      assert.equal(published.details.reference_status, "mismatch");
+      const problem = published.details.reference_error;
       assert.match(problem, kind === "md" ? /step 120 atom id.*axis x/ : /sample 2.*0\.4/);
-      await page.waitForFunction(() => document.querySelector("#analysis-status").textContent.includes("分析失败"));
-      assert.ok(await page.locator("#analysis-results").isHidden());
-      assert.deepEqual(await listRuns(), historyBeforeError);
-      rejected.push(problem);
+      await page.locator("#analysis-results").waitFor({ state: "visible" });
+      const after = await listRuns();
+      assert.ok(after.includes(published.id));
+      assert.deepEqual(after.filter(id => id !== published.id), historyBeforeMismatch);
+      discrepancies.push({ id: published.id, problem });
     }
     await page.reload();
     await openPanel();
@@ -164,7 +167,7 @@ async function main() {
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(external, []);
-    console.log(JSON.stringify({ runs, rejected, external, pageErrors: errors }, null, 2));
+    console.log(JSON.stringify({ runs, discrepancies, external, pageErrors: errors }, null, 2));
   } finally {
     await browser.close();
   }

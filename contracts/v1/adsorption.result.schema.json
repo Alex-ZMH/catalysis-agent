@@ -73,6 +73,69 @@
         ]
       },
       "minItems": 1
+    },
+    "observed_adsorption": {
+      "type": "array",
+      "description": "Unfiltered numerical adsorption energies per adsorbate. Review annotations identify limits of interpretation.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "structure_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "logical_id": {
+            "$ref": "urn:catalysis:contract:run:1#/$defs/id"
+          },
+          "status": {
+            "enum": [
+              "comparable",
+              "review"
+            ]
+          },
+          "contract_status": {
+            "enum": [
+              "comparable",
+              "noncomparable"
+            ]
+          },
+          "adsorption_energy_eV": {
+            "type": "number"
+          },
+          "normalization": {
+            "const": "per_adsorbate"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/results/items/oneOf/1/properties/reasons/items"
+            },
+            "uniqueItems": true
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "cell_size_exceeded",
+                "lattice_mismatch",
+                "scf_limit_ambiguous"
+              ]
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "structure_id",
+          "logical_id",
+          "status",
+          "contract_status",
+          "adsorption_energy_eV",
+          "normalization",
+          "reasons",
+          "annotations"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

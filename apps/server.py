@@ -18,7 +18,7 @@ import sys
 import threading
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from jsonschema import ValidationError
 from packages.agent.approvals import ApprovalStore, RestoredApprovalError
@@ -83,6 +83,7 @@ PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
 
 
 RUN_PATH = re.compile(r"/api/runs/(run-[0-9a-f]{64})(?:/(manifest|artifacts/(art-[0-9a-f]{64})))?")
+MD_EXPORT_PATH = re.compile(r"/api/runs/(run-[0-9a-f]{64})/artifacts/(art-[0-9a-f]{64})/md-data")
 PROJECT_PATH = re.compile(r"/api/projects/([a-zA-Z0-9][a-zA-Z0-9_-]{0,95})(/.*)")
 RECEIPT_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/receipt")
 BACKUP_PATH = re.compile(r"/api/backups/([0-9a-f]{64})")
@@ -93,6 +94,7 @@ ACTIONS = {
     (False, "/api/backups"): "project.backups.list",
     (True, "/api/runs"): "project.run.create",
     (True, "/api/cell"): "project.cell.check",
+    (True, "/api/md-handoff"): "project.structure.convert",
     (True, "/api/plans"): "project.plan.create",
 }
 
@@ -100,6 +102,8 @@ ACTIONS = {
 def access_action(path, post):
     if (post, path) in ACTIONS:
         return ACTIONS[post, path], {}
+    if not post and (handoff := MD_EXPORT_PATH.fullmatch(path)):
+        return "project.structure.export", {"run_id": handoff[1], "artifact_id": handoff[2]}
     if not post and (run := RUN_PATH.fullmatch(path)):
         run_id, suffix, artifact_id = run.groups()
         ids = {"run_id": run_id}
@@ -392,6 +396,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             self._send(200, json_bytes({"runs": store.recent()}))
             return
+        handoff = MD_EXPORT_PATH.fullmatch(path)
+        if handoff:
+            name, raw = store.download(handoff[1], handoff[2])
+            self._md_handoff(name, raw, {}, {"run_id": handoff[1], "artifact_id": handoff[2]})
+            return
         match = RUN_PATH.fullmatch(path)
         if not match:
             raise FileNotFoundError()
@@ -442,11 +451,25 @@ class Handler(BaseHTTPRequestHandler):
             record = approvals.reconcile(match[1])
         self._send(200, json_bytes(record))
 
+    def _md_handoff(self, name, raw, options, provenance=None):
+        from packages.science.md_handoff import export_structure
+
+        data, metadata = export_structure(name.rsplit("/", 1)[-1], raw, options)
+        metadata.update(source_filename=name, converter_commit=self.server.commit,
+                        project_id=self.workspace.project, **(provenance or {}))
+        package = io.BytesIO()
+        with ZipFile(package, "w", compression=ZIP_DEFLATED) as zip_file:
+            zip_file.writestr("structure.data", data)
+            zip_file.writestr("metadata.json", json_bytes(metadata) + b"\n")
+            zip_file.writestr("in.read_geometry",
+                              "units metal\natom_style atomic\nboundary p p p\nread_data structure.data\n")
+        self._send(200, package.getvalue(), "application/zip", "vasp-to-lammps.zip")
+
     def _post(self, path):
         if path == "/api/plans" or path.startswith("/api/plans/"):
             self._plan_action(path)
             return
-        if path not in {"/api/runs", "/api/cell"}:
+        if path not in {"/api/runs", "/api/cell", "/api/md-handoff"}:
             raise FileNotFoundError()
         size = int(self.headers.get("Content-Length", "-1"))
         if self.headers.get("Transfer-Encoding") or not 0 < size <= self.server.upload_limit:
@@ -462,6 +485,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("上传提前结束。")
             fields = form_fields(self.headers, data)
             name, blob = fields["file"]
+            if path == "/api/md-handoff":
+                if "reference" in fields:
+                    raise ValueError("结构交接只接收一个 VASP 结构文件。")
+                self._md_handoff(name, blob, fields["options"])
+                return
             if path == "/api/cell":
                 from packages.science.cell import plan_from_poscar
                 if "reference" in fields:

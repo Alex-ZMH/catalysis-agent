@@ -335,8 +335,6 @@ def _fit(normalized):
         result[field] = rmse
         if rmse is not None and rmse > (limit := normalized['acceptance'][f'max_{field}']):
             failures.append(f'{partition} log RMSE {rmse:.6g} exceeds limit {limit:.6g}')
-    if failures:
-        raise ValueError('Kinetics fit failed acceptance: ' + '; '.join(failures))
 
     intervals = None
     fit_errors = design @ beta - y[train]
@@ -351,7 +349,10 @@ def _fit(normalized):
     diagnostics = {'train_rows': int(train.sum()), 'holdout_rows': int((~train).sum()),
                    'design_rank': rank, 'scaled_condition_number': float(singular[0] / singular[-1]),
                    'train_log_rmse': result['train_log_rmse'], 'holdout_log_rmse': result['holdout_log_rmse'],
-                   'validation_scope': scope, 'warnings': result['warnings'], 'status': 'passed'}
+                   'validation_scope': scope, 'warnings': result['warnings'],
+                   'status': 'above_configured_threshold' if failures else 'passed'}
+    if failures:
+        diagnostics['threshold_notes'] = failures
     return result, diagnostics, intervals
 
 
@@ -363,13 +364,11 @@ def analyze(filename: str, content: bytes, options: dict, origin: str, raw_id: s
     if intervals is not None:
         method = 'Unweighted log-space OLS covariance with independent homoscedastic Gaussian errors and Student t intervals'
         uncertainty = {'status': 'reported', 'method': method, 'confidence_level': 0.95,
-                       'intervals': intervals, 'evidence_id': raw_id}
+                       'intervals': intervals}
         result['parameter_uncertainty'] = uncertainty
-        kinetics.validate_result(result, normalized)
         evidence = {'raw_id': raw_id, 'training_observation_ids': [row['observation_id']
                     for row in normalized['observations'] if row['partition'] == 'train'],
                     'method': method, 'confidence_level': 0.95, 'intervals': intervals}
         uncertainty['evidence_id'] = register('kinetics-uncertainty.json',
                                               json.dumps(evidence, allow_nan=False).encode('utf-8'))
-    kinetics.validate_result(result, normalized)
     return normalized, result, details

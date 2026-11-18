@@ -6,7 +6,6 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from jsonschema import ValidationError
 from packages.agent.workspace import Workspace
 from packages.check import link_result
 
@@ -124,7 +123,7 @@ class RawImportAcceptance(unittest.TestCase):
                 self.assertAlmostEqual(row["fraction"], fraction)
                 self.assertAlmostEqual(row["value"], target, delta=1e-9)
 
-    def test_reference_discrepancies_prevent_publication(self):
+    def test_reference_discrepancies_are_published_with_raw_results(self):
         for kind, change in [
             ("md", lambda r: r["frames"][1]["atoms"][0]["position"].__setitem__(0, 20)),
             ("md", lambda r: r["frames"][1]["cell"]["periodic"].__setitem__(1, True)),
@@ -134,9 +133,16 @@ class RawImportAcceptance(unittest.TestCase):
         ]:
             ref = copy.deepcopy(CASES[kind]()[-1])
             change(ref)
-            with self.subTest(kind=kind), self.assertRaises((ValueError, ValidationError)):
-                self.run_case(kind, ref)
-        self.assertEqual(self.store.recent(), [])
+            with self.subTest(kind=kind):
+                run = self.run_case(kind, ref)
+                self.assertEqual(run["details"]["reference_status"], "mismatch")
+                self.assertTrue(run["details"]["reference_error"])
+                if kind == "md":
+                    self.assertEqual(len(run["result"]["dump"]["frames"]), 3)
+                else:
+                    self.assertEqual(len(run["result"]["line_profiles"]), 2)
+                    self.assertEqual(sum("reference" in p for p in run["result"]["line_profiles"]), 1)
+        self.assertEqual(len(self.store.recent()), 5)
 
     def test_raw_only_and_replay_cache_respect_reference_bytes(self):
         for kind in CASES:

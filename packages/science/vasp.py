@@ -13,6 +13,7 @@ from os import getenv
 from xml.etree import ElementTree as ET
 
 from . import adsorption
+from .cell import _geometry
 
 _AXES = ("a", "b", "c")
 
@@ -267,6 +268,7 @@ def _parse(data, run):
     if structure is None:
         raise ValueError("Final calculation has no associated structure")
     basis = _rows(structure, "./crystal/varray[@name='basis']/v")
+    _, lengths, _ = _geometry(basis)
     positions = _rows(structure, "./varray[@name='positions']/v")
     forces = _rows(final, "./varray[@name='forces']/v")
     if not len(positions) == len(elements) == len(forces):
@@ -305,8 +307,8 @@ def _parse(data, run):
         residual = _number(run["scf_residual_eV"])
         if residual < 0:
             raise ValueError("Supplementary SCF residual must be nonnegative")
-    if len(sc_steps) >= _integer(params["NELM"]) and residual <= electronic_limit:
-        raise ValueError("SCF reached NELM with ambiguous convergence at XML precision")
+    nelm = _integer(params["NELM"])
+    ambiguous_scf = len(sc_steps) >= nelm and residual <= electronic_limit
     force_threshold = _number(params["EDIFFG"])
     force_limit = -force_threshold if force_threshold < 0 else _number(
         run["force_limit_eV_per_angstrom"])
@@ -329,6 +331,7 @@ def _parse(data, run):
         raise ValueError("magnetic_state must be a nonempty description")
     return normalized, {
         "basis_A": basis, "fractional_positions": positions, "elements": elements,
+        "lengths_A": dict(zip(_AXES, lengths)),
         "energy_eV": normalized["energy_eV"],
         "free_directions": masks, "free_directions_source": mask_source,
         "ionic_steps": tree.steps, "scf_steps": len(sc_steps),
@@ -337,7 +340,10 @@ def _parse(data, run):
             not has_scf_proxy or mask_source == "protocol evidence" or force_threshold >= 0
             or bool(supplied.keys() & {"EDIFF", "EDIFFG", "NELM"})),
         "geometry_history": run["geometry_history"], "supplementary_parameters": supplied,
-        "NELM": _integer(params["NELM"]), "EDIFFG": force_threshold,
+        "NELM": nelm, "EDIFFG": force_threshold,
+        "scf_limit_ambiguous": ambiguous_scf,
+        "convergence_status": ("uncertain" if ambiguous_scf else
+                               "converged" if adsorption._converged(normalized) else "unconverged"),
         "vasp_version": root.findtext("./generator/i[@name='version']"),
     }
 
@@ -390,8 +396,7 @@ def _remap(run, structures, evidence, details):
 
 def analyze(filename: str, content: bytes, options: dict, origin: str,
             raw_id: str, register: callable) -> tuple[dict, dict, dict]:
-    """Import a study, validate v1 payloads and register exact source members."""
-    from .cell import check_cell
+    """Import a study and retain diagnostics alongside the formal v1 result."""
 
     if origin not in ("synthetic", "research"):
         raise ValueError("origin must be synthetic or research")
@@ -403,9 +408,10 @@ def analyze(filename: str, content: bytes, options: dict, origin: str,
     if isinstance(limits, list) and len(limits) == 3:
         limits = dict(zip(_AXES, limits))
     if (not isinstance(limits, dict) or limits.keys() - set(_AXES)
-            or any(type(value) not in (int, float) or not 0 < value <= 50
+            or any(type(value) not in (int, float) or _number(value) <= 0
                    for value in limits.values())):
-        raise ValueError("cell_limits_A must specify positive a/b/c limits, each at most 50 Å")
+        raise ValueError("cell_limits_A must specify positive finite a/b/c thresholds")
+    limits = dict.fromkeys(_AXES, 50) | limits
     try:
         members = _members(content)
     except (zipfile.BadZipFile, RuntimeError, EOFError, OSError, zlib.error, NotImplementedError) as exc:
@@ -452,7 +458,15 @@ def analyze(filename: str, content: bytes, options: dict, origin: str,
                 if key not in sources:
                     raise ValueError(f"Undeclared supplementary evidence ID {key!r}")
             parsed, geometry = _parse(members[path], run)
-            cell = check_cell(geometry["basis_A"], limits)
+            lengths = geometry.pop("lengths_A")
+            exceeded = [axis for axis in _AXES if lengths[axis] > limits[axis]]
+            cell = {"lengths_A": lengths, "limits_A": limits,
+                    "exceeded_axes": exceeded, "within_limit": not exceeded}
+            annotations = []
+            if exceeded:
+                annotations.append("cell_size_exceeded")
+            if geometry["scf_limit_ambiguous"]:
+                annotations.append("scf_limit_ambiguous")
             parsed.update({key: run[key] for key in _ROLE_FIELDS[role]})
             if role == "bulk":
                 parsed["vacuum_angstrom"] = 0
@@ -460,7 +474,7 @@ def analyze(filename: str, content: bytes, options: dict, origin: str,
                 parsed["box_lengths_angstrom"] = [cell["lengths_A"][axis] for axis in _AXES]
             if run.get("site") is not None and not isinstance(run["site"], str):
                 raise ValueError("site must be a string")
-            details.append(dict(geometry, role=role, file=path, cell_check=cell,
+            details.append(dict(geometry, role=role, file=path, cell_check=cell, annotations=annotations,
                                 structure_id=parsed["structure_id"],
                                 protocol_evidence_id=run["protocol_evidence_id"],
                                 prior_relaxation_evidence_id=run.get("prior_relaxation_evidence_id"),
@@ -474,25 +488,30 @@ def analyze(filename: str, content: bytes, options: dict, origin: str,
         except (ET.ParseError, KeyError, TypeError, ValueError, OverflowError, AttributeError, LookupError) as exc:
             raise ValueError(f"{role} ({path}): {exc}") from exc
 
-    oversized = [f"{row['structure_id']}: lengths_A={row['cell_check']['lengths_A']}, "
-                 f"limits_A={row['cell_check']['limits_A']}, "
-                 f"exceeded_axes={row['cell_check']['exceeded_axes']}"
-                 for row in details if not row["cell_check"]["within_limit"]]
-    if oversized:
-        raise ValueError("VASP cell exceeds size limits in Å: " + "; ".join(oversized))
-
     clean_basis = details[1]["basis_A"]
+    tolerance = 1e-6
     for row in details:
-        if row["role"] == "configurations" and any(
-            not math.isclose(expected, actual, rel_tol=0, abs_tol=1e-6)
+        if row["role"] != "configurations":
+            continue
+        matches = all(
+            math.isclose(expected, actual, rel_tol=0, abs_tol=tolerance)
             for clean_vector, config_vector in zip(clean_basis, row["basis_A"])
             for expected, actual in zip(clean_vector, config_vector)
-        ):
-            raise ValueError(f"{row['structure_id']} ({row['file']}): fixed-cell comparison "
-                             "requires the same ordered lattice vectors as the clean slab "
-                             f"(1e-6 Å component tolerance); got {row['basis_A']}, clean={clean_basis}")
+        )
+        row["lattice_check"] = {"matches_clean_slab": matches, "component_tolerance_A": tolerance}
+        if not matches:
+            row["annotations"].append("lattice_mismatch")
 
-    adsorption.validate_input(normalized)
+    observed = []
+    result = adsorption.derive_result(normalized, observed=observed)
+    by_id = {row["structure_id"]: row for row in details}
+    shared = (normalized["bulk"]["structure_id"], normalized["clean_slab"]["structure_id"])
+    for config, formal, observation in zip(rows, result["results"], observed, strict=True):
+        dependencies = (*shared, config["structure_id"], *config["reference_coefficients"])
+        annotations = sorted({code for key in dependencies for code in by_id[key]["annotations"]})
+        observation.update(logical_id=config["structure_id"], contract_status=formal["status"],
+                           status="review" if observation["reasons"] or annotations else "comparable",
+                           annotations=annotations, normalization="per_adsorbate")
     ids = {path: register(path, members[path])
            for path in sorted({"study.json", *used_xml, *sources.values()})}
     structures = {row["structure_id"]: ids[row["file"]] for row in details}
@@ -500,8 +519,9 @@ def analyze(filename: str, content: bytes, options: dict, origin: str,
     for run, detail in zip((normalized["bulk"], normalized["clean_slab"], *rows, *gas),
                            details, strict=True):
         _remap(run, structures, evidence, detail)
-    result = adsorption.derive_result(normalized)
-    adsorption.validate_result(result, normalized)
+    for formal, observation in zip(result["results"], observed, strict=True):
+        formal["structure_id"] = observation["structure_id"] = structures[formal["structure_id"]]
+    result["observed_adsorption"] = observed
     ranked = sorted((row for row in result["results"] if row["status"] == "comparable"),
                     key=lambda row: row["adsorption_energy"])
     for row in details:

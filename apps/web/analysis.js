@@ -13,6 +13,8 @@
     "observation_id", "relative_uncertainty", "conversion_fraction"];
   const terms = new Map(Object.entries({
     comparable: "可比较", noncomparable: "不可比较", unconverged: "未收敛",
+    converged: "已收敛", uncertain: "收敛状态待定", cell_size_exceeded: "超过尺寸参考值",
+    lattice_mismatch: "晶格与裸表面不同", scf_limit_ambiguous: "达到电子迭代上限",
     finite_size: "有限尺寸证据不足", slab_protocol: "表面模型设置不一致",
     electronic_method: "电子结构方法不一致", reference_protocol: "参考态设置不一致",
     reference_stoichiometry: "参考态计量不一致", charge_balance: "电荷不平衡",
@@ -298,6 +300,20 @@
     }).container);
   }
 
+  function renderDftHandoff(run, target) {
+    const artifacts = new Map(run.artifacts.map(artifact => [artifact.id, artifact]));
+    const roles = { bulk: "体相", clean_slab: "裸表面", configurations: "吸附构型", gas_references: "气相参考" };
+    const list = element("ul", null, "ca-artifacts");
+    for (const structure of run.details?.runs ?? []) {
+      const artifact = artifacts.get(structure.blob_id);
+      if (!artifact) continue;
+      const label = [roles[structure.role], structure.site || structure.logical_id || structure.file].filter(Boolean).join(" · ");
+      list.append(element("li"));
+      list.lastElementChild.append(downloadLink(artifact.url + "/md-data", label + " · 下载 LAMMPS 结构包"));
+    }
+    if (list.childElementCount) target.append(element("h4", "DFT → MD 结构交接"), list);
+  }
+
   function renderAdsorption(run, target) {
     const details = run.details ?? {};
     const structures = new Map();
@@ -306,7 +322,7 @@
         if (key) structures.set(key, structure);
       }
     }
-    const configurations = run.result?.results ?? [];
+    const configurations = run.result?.observed_adsorption ?? details.observed_adsorption ?? run.result?.results ?? [];
     const labels = new Map();
     const list = element("ul");
     const energyField = details.energy_field ?? "e_fr_energy";
@@ -319,10 +335,11 @@
         .find(value => typeof value === "string" && value.trim() && !/^art-[a-f0-9]{64}$/i.test(value.trim()))
         ?? `构型 ${index + 1}`;
       labels.set(item.structure_id, label);
-      const description = item.status === "comparable"
-        ? `${item.adsorption_energy} ${item.unit ?? "eV"} / 吸附物`
-        : (item.reasons ?? []).map(translate).join("、");
-      const row = element("li", `${label} · ${translate(item.status)} · ${description}`);
+      const flags = [...new Set([...(item.reasons ?? []), ...(item.annotations ?? [])])].map(translate);
+      const energy = item.adsorption_energy_eV ?? item.adsorption_energy;
+      const numeric = Number.isFinite(energy) ? `${energy} ${item.unit ?? "eV"} / 吸附物` : "暂无吸附能数值";
+      const row = element("li", `${label} · ${numeric}`);
+      if (flags.length) row.append(element("small", flags.join("、")));
       const check = structure?.cell_check;
       const dimensions = ["a", "b", "c"].flatMap((axis, i) => {
         const length = check?.lengths_A?.[axis] ?? check?.lengths_A?.[i];
@@ -335,6 +352,11 @@
       list.append(row);
     }
     if (list.childElementCount) target.append(list);
+    const totals = (details.runs ?? []).filter(row => Number.isFinite(row.energy_eV));
+    if (totals.length) target.append(dataTable("各结构原始 VASP 总能（eV）",
+      ["结构", "TOTEN（eV）", "收敛状态"], totals.map(row => [
+        row.logical_id ?? row.file, row.energy_eV, translate(row.convergence_status ?? "—"),
+      ])));
     if (details.ranking?.length) {
       const ranking = details.ranking.map((id, index) => labels.get(id) ?? `第 ${index + 1} 名构型`);
       target.append(element("p", `可比构型按吸附能升序：${ranking.join(" → ")}`));
@@ -348,9 +370,10 @@
       element("strong", originLabel[run.origin] ?? run.origin, "ca-origin"),
       metrics([["运行 ID", run.id], ["源文件", run.filename], ["创建时间", run.created_at]]),
     );
-    if (run.quality) target.append(element("p", `质量状态：${translate(run.quality)}`));
-    if (run.quality_flags?.length) target.append(element("p", run.quality_flags.map(translate).join("、"), "ca-warning"));
-    if (run.kind === "adsorption") renderAdsorption(run, target);
+    if (run.kind === "adsorption") {
+      renderAdsorption(run, target);
+      renderDftHandoff(run, target);
+    }
     if (run.kind === "kinetics") {
       const summary = [
         ["模型", modelLabel[result.model] ?? result.model],
@@ -364,6 +387,8 @@
       if (result.rate_at_reference != null) summary.push(["参考浓度下的速率", `${result.rate_at_reference} ${result.rate_at_reference_unit}`]);
       for (const [species, order] of Object.entries(result.orders ?? {})) summary.push([`${species} 反应级数`, order]);
       target.append(metrics(summary));
+      const thresholds = run.details?.fit_diagnostics?.threshold_notes;
+      if (thresholds?.length) target.append(element("p", thresholds.join(" · "), "ca-muted"));
       if (result.warnings?.length) target.append(element("p", result.warnings.map(translate).join("、"), "ca-warning"));
       const uncertainty = run.details?.measurement_uncertainty;
       if (uncertainty?.status === "partial" || uncertainty?.status === "unavailable") {
@@ -380,7 +405,9 @@
       const compared = run.kind === "md"
         ? (run.details?.frame_checks ?? []).some(check => Number.isFinite(check.max_abs_error))
         : (result.line_profiles ?? []).some(profile => profile.reference);
-      const comparison = element("p", compared ? "已与独立参考比较" : "仅导入 · 未与独立参考比较", "ca-origin");
+      const referenceNote = run.details?.reference_comparison;
+      const comparison = element("p", referenceNote?.error || run.details?.reference_error
+        || (compared ? "已与独立参考比较" : "已读取原始输出"), "ca-origin");
       comparison.id = "analysis-a5-comparison";
       science.append(comparison);
       if (run.kind === "md") renderMD(run, science);
@@ -790,6 +817,15 @@
         </form>
         <section id="cell-results" aria-label="晶胞检查结果" hidden></section>
       </details>
+      <details class="ca-cell" id="md-handoff">
+        <summary>DFT → MD 结构交接</summary>
+        <form id="md-handoff-form">
+          <label>VASP 结构<input id="md-handoff-file" name="file" type="file" required></label>
+          <p class="ca-muted">支持 POSCAR、CONTCAR 和 vasprun.xml。导出 LAMMPS 晶胞、原子坐标和元素质量。</p>
+          <button id="md-handoff-submit" type="submit" class="ca-primary">生成 LAMMPS 结构包</button>
+          <p id="md-handoff-status" role="status"></p>
+        </form>
+      </details>
       <section id="a1-backups" aria-labelledby="a1-backup-title" hidden>
         <div class="ca-heading"><h2 id="a1-backup-title">项目备份</h2><button id="a1-backup-refresh" type="button">刷新备份</button></div>
         <p id="a1-backup-status" role="status"></p>
@@ -938,6 +974,7 @@
       return data;
     };
     workbench.hidden = false;
+    find("#md-handoff").hidden = allowed.get(project) === "viewer";
     mountWorkspace(panel, workbench, projectRequest, controller.signal);
     if (allowed.get(project) === "admin") {
       const backups = find("#a1-backups");
@@ -974,6 +1011,34 @@
 
   function mountWorkspace(panel, workbench, request, signal) {
     const find = selector => workbench.querySelector(selector);
+    const handoff = find("#md-handoff-form");
+    const handoffSubmit = find("#md-handoff-submit");
+    const handoffStatus = find("#md-handoff-status");
+    handoff.addEventListener("submit", async event => {
+      event.preventDefault();
+      handoffSubmit.disabled = true;
+      setStatus(handoffStatus, "正在转换结构…");
+      try {
+        const response = await fetch(projectPath("/api/md-handoff"), {
+          method: "POST", body: new FormData(handoff), signal,
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.error ?? `HTTP ${response.status}`);
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = element("a");
+        link.href = url;
+        link.download = "vasp-to-lammps.zip";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        setStatus(handoffStatus, "已生成 LAMMPS 结构包。");
+      } catch (error) {
+        if (!signal?.aborted) setStatus(handoffStatus, error.message, true);
+      } finally {
+        handoffSubmit.disabled = false;
+      }
+    });
     const refreshPlans = mountPlans(find, panel, request, signal);
     const form = find("#analysis-form");
     const fields = form.elements;

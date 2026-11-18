@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from fractions import Fraction
 
 import numpy as np
@@ -201,6 +202,10 @@ def _invalid_json_constant(token):
     raise ValueError(f"invalid JSON constant {token}")
 
 
+class _ReferenceMismatch(ValueError):
+    pass
+
+
 def _references(reference, length_unit, sample_limit=None):
     if reference is None:
         return {}
@@ -209,7 +214,7 @@ def _references(reference, length_unit, sample_limit=None):
     if set(reference) != {"length_unit", "profiles"}:
         raise ValueError("reference: expected exactly length_unit and profiles")
     if reference.get("length_unit") != length_unit:
-        raise ValueError(f"reference length unit mismatch: mesh={length_unit!r}, reference={reference.get('length_unit')!r}")
+        raise _ReferenceMismatch(f"reference length unit mismatch: mesh={length_unit!r}, reference={reference.get('length_unit')!r}")
     profiles = reference.get("profiles")
     if not isinstance(profiles, list) or not profiles:
         raise ValueError("reference: expected a nonempty profiles array")
@@ -343,69 +348,52 @@ def compare_frozen(result, details, reference):
     return {"profiles": summaries}
 
 
-def read_import(filename, content, options, raw_id, reference=None):
-    """Return a validated equipment record and a UI-ready sampling summary."""
-    from .vtu_reader import read_mesh
-
-    result = read_mesh(filename, content, options, raw_id)
-    reference_id = None
-    if isinstance(reference, tuple) and len(reference) == 3:
-        reference_filename, reference_content, reference_id = reference
-        reference = _decode_reference(reference_filename, reference_content)
-    references = _references(reference, result["length_unit"])
-    requested = options.get("profiles", list(references.values()))
-    if not isinstance(requested, list):
-        raise ValueError("options.profiles must be an array")
-
-    _check_sample_budget(requested, "profile")
-    specs = [_profile_spec(profile, f"profile {index}") for index, profile in enumerate(requested)]
-    if references:
-        keys = [key for key, _, _ in specs]
-        if len(set(keys)) != len(keys):
-            raise ValueError("ambiguous duplicate requested profile")
-        if references.keys() - set(keys):
-            raise ValueError("unmatched reference profile (check endpoints, field selection and fractions)")
-
-    details = {
-        "origin": "vtu", "raw_id": raw_id, "filename": filename,
-        "length_unit": result["length_unit"], "point_count": len(result["points"]),
-        "cell_count": len(result["cells"]), "field_count": len(result["fields"]),
-        "profiles": [], "reference_profile_count": len(references),
-    }
-    if specs:
-        points = np.asarray(result["points"], dtype=float)
-        cells = [_Cell(points, cell, index) for index, cell in enumerate(result["cells"])]
-        tree = None
-        if cells:
-            lows = np.array([cell.low for cell in cells])
-            highs = np.array([cell.high for cell in cells])
-            tree = _Bounds(cells, lows, highs, lows / 2 + highs / 2, np.arange(len(cells)))
-        fields = {(field["association"], field["name"]): field for field in result["fields"]}
-        arrays = {}
-        profiles = []
-        for index, (key, profile, fractions) in enumerate(specs):
-            field_key = key[2:4]
-            field = fields.get(field_key)
-            component = key[4]
-            if field is None:
-                raise ValueError(f"profile {index}: unknown field {field_key}")
-            if (component is None and field["components"] < 2) or (
-                component is not None and component >= field["components"]
-            ):
-                raise ValueError(f"profile {index}: invalid selection for field {field_key}")
-            if field_key not in arrays:
-                arrays[field_key] = np.asarray(field["values"], dtype=float)
-            a, b = np.asarray(profile["a"], dtype=float), np.asarray(profile["b"], dtype=float)
-            samples = [
-                {"fraction": fraction, "value": _sample(
-                    tree, (1 - fraction) * a + fraction * b, field, arrays[field_key], component
-                )}
-                for fraction in fractions
-            ]
-            profile.update(coordinate_frame="mesh", unit=field["unit"], samples=samples)
-            expected = references.get(key)
-            if expected is not None:
+def _sample_profiles(result, specs, references, reference_id, details):
+    points = np.asarray(result["points"], dtype=float)
+    cells = [_Cell(points, cell, index) for index, cell in enumerate(result["cells"])]
+    tree = None
+    if cells:
+        lows = np.array([cell.low for cell in cells])
+        highs = np.array([cell.high for cell in cells])
+        tree = _Bounds(cells, lows, highs, lows / 2 + highs / 2, np.arange(len(cells)))
+    fields = {(field["association"], field["name"]): field for field in result["fields"]}
+    arrays = {}
+    profiles = []
+    for index, (key, profile, fractions) in enumerate(specs):
+        field_key = key[2:4]
+        field = fields.get(field_key)
+        component = key[4]
+        if field is None:
+            raise ValueError(f"profile {index}: unknown field {field_key}")
+        if (component is None and field["components"] < 2) or (
+            component is not None and component >= field["components"]
+        ):
+            raise ValueError(f"profile {index}: invalid selection for field {field_key}")
+        if field_key not in arrays:
+            arrays[field_key] = np.asarray(field["values"], dtype=float)
+        a, b = np.asarray(profile["a"], dtype=float), np.asarray(profile["b"], dtype=float)
+        samples = [
+            {"fraction": fraction, "value": _sample(
+                tree, (1 - fraction) * a + fraction * b, field, arrays[field_key], component
+            )}
+            for fraction in fractions
+        ]
+        profile.update(coordinate_frame="mesh", unit=field["unit"], samples=samples)
+        status = details["reference_status"]
+        comparison = {
+            "field": profile["field"], "unit": profile["unit"], "sample_count": len(samples),
+            "outside_count": sum(sample["value"] is None for sample in samples),
+            "reference_matched": False,
+            "reference_status": "not_covered" if references else status,
+        }
+        expected = references.get(key)
+        if expected is not None:
+            try:
                 _compare(index, profile, expected)
+            except ValueError as exc:
+                comparison.update(reference_status="mismatch", reference_error=str(exc))
+            else:
+                comparison.update(reference_status="matched", reference_matched=True)
                 if reference_id is not None:
                     profile["reference"] = {
                         "source": "user_provided", "reference_artifact_id": reference_id,
@@ -415,13 +403,67 @@ def read_import(filename, content, options, raw_id, reference=None):
                             if name in expected
                         },
                     }
-            profiles.append(profile)
-            details["profiles"].append({
-                "field": profile["field"], "unit": profile["unit"],
-                "sample_count": len(samples),
-                "outside_count": sum(sample["value"] is None for sample in samples),
-                "reference_matched": expected is not None,
-            })
-        result["line_profiles"] = profiles
-    validate_equipment(result)
+        profiles.append(profile)
+        details["profiles"].append(comparison)
+    return profiles
+
+
+def read_import(filename, content, options, raw_id, reference=None):
+    """Parse a VTU mesh, sample A–B profiles, and report optional reference checks."""
+    from .vtu_reader import read_mesh
+
+    result = read_mesh(filename, content, options, raw_id)
+    details = {
+        "origin": "vtu", "raw_id": raw_id, "filename": filename,
+        "length_unit": result["length_unit"], "point_count": len(result["points"]),
+        "cell_count": len(result["cells"]), "field_count": len(result["fields"]),
+        "profiles": [], "reference_profile_count": 0, "reference_status": "not_provided",
+    }
+    references, reference_id = {}, None
+    if reference is not None:
+        try:
+            if isinstance(reference, tuple) and len(reference) == 3:
+                reference_filename, reference_content, reference_id = reference
+                if (not isinstance(reference_id, str) or reference_id == raw_id
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", reference_id)):
+                    raise ValueError("reference requires a distinct independent raw artifact ID")
+                reference = _decode_reference(reference_filename, reference_content)
+            references = _references(reference, result["length_unit"])
+        except ValueError as exc:
+            status = "mismatch" if isinstance(exc, _ReferenceMismatch) else "invalid"
+            details.update(reference_status=status, reference_error=str(exc))
+        else:
+            details.update(reference_status="matched", reference_profile_count=len(references))
+
+    explicit = "profiles" in options
+    if explicit:
+        requested = options["profiles"]
+        if not isinstance(requested, list):
+            raise ValueError("options.profiles must be an array")
+        _check_sample_budget(requested, "profile")
+        specs = [_profile_spec(profile, f"profile {index}") for index, profile in enumerate(requested)]
+    else:
+        specs = [(key, {name: ref[name] for name in ("a", "b", "field")}, ref["fractions"])
+                 for key, ref in references.items()]
+
+    keys = {key for key, _, _ in specs}
+    if references and len(keys) != len(specs):
+        details.update(reference_status="mismatch", reference_error="ambiguous duplicate requested profile")
+        references = {}
+    elif references.keys() - keys:
+        details.update(reference_status="mismatch", reference_error=(
+            "unmatched reference profile (check endpoints, field selection and fractions)"
+        ))
+
+    if specs:
+        try:
+            result["line_profiles"] = _sample_profiles(result, specs, references, reference_id, details)
+        except ValueError as exc:
+            if explicit:
+                raise
+            details.update(profiles=[], reference_status="mismatch", reference_error=str(exc))
+        for comparison in details["profiles"]:
+            if "reference_error" in comparison:
+                details["reference_status"] = "mismatch"
+                details.setdefault("reference_error", comparison["reference_error"])
     return result, details

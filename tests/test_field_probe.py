@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from packages.science.field_probe import read_import
+from packages.science.imports import validate_equipment
 
 
 def mesh(points, cells, point_values, cell_values):
@@ -98,8 +99,13 @@ class FieldProbeTests(unittest.TestCase):
             ({"values": [0, 300, 310, 320, None]}, r"sample 0 .*computed=None.*reference=0"),
             ({"unit": "degC"}, r"unit mismatch.*K.*degC"),
         ]:
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
-                self.run_import(adjacent_hexes(), reference={"length_unit": "m", "profiles": [dict(oracle, **change)]})
+            with self.subTest(change=change):
+                reference = {"length_unit": "m", "profiles": [dict(oracle, **change)]}
+                result, details = self.run_import(adjacent_hexes(), reference=reference)
+                self.assertEqual(sampled(result["line_profiles"][0]), oracle["values"])
+                self.assertNotIn("reference", result["line_profiles"][0])
+                self.assertEqual(details["reference_status"], "mismatch")
+                self.assertRegex(details["profiles"][0]["reference_error"], message)
 
     def test_reference_unmatched_and_duplicate(self):
         line = spec([0, 0, 0], [2, 0, 0], fractions=[0, 1])
@@ -109,8 +115,11 @@ class FieldProbeTests(unittest.TestCase):
             ([line], [oracle, oracle], "ambiguous duplicate reference"),
             ([line, line], [oracle], "ambiguous duplicate requested"),
         ]:
-            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
-                self.run_import(adjacent_hexes(), specs, {"length_unit": "m", "profiles": refs})
+            with self.subTest(message=message):
+                result, details = self.run_import(adjacent_hexes(), specs, {"length_unit": "m", "profiles": refs})
+                self.assertEqual(len(result["line_profiles"]), len(specs))
+                self.assertRegex(details["reference_error"], message)
+                self.assertTrue(all("reference" not in profile for profile in result["line_profiles"]))
 
     def test_tetra_vector_norm_is_after_interpolation_and_obeys_slanted_face(self):
         points = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
@@ -149,8 +158,8 @@ class FieldProbeTests(unittest.TestCase):
         result, _ = self.run_import(adjacent_hexes(), reference=reference)
         self.assertEqual(sampled(result["line_profiles"][0]), [300, 310, 320])
         expected["relative_tolerance"] = .029
-        with self.assertRaisesRegex(ValueError, "sample 1 .*tolerance"):
-            self.run_import(adjacent_hexes(), reference=reference)
+        _, details = self.run_import(adjacent_hexes(), reference=reference)
+        self.assertRegex(details["reference_error"], "sample 1 .*tolerance")
 
     def test_spatial_tree_partitions_mesh_and_voxel_order(self):
         points = [(2*i + x, y, z) for i in range(12) for z in (0, 1) for y in (0, 1) for x in (0, 1)]
@@ -184,8 +193,9 @@ class FieldProbeTests(unittest.TestCase):
             result, _ = self.run_import(adjacent_hexes(), [count, explicit], reference)
             self.assertEqual([len(p["samples"]) for p in result["line_profiles"]], [3, 2])
         with patch("packages.science.field_probe._MAX_TOTAL_SAMPLES", 4):
-            with self.assertRaisesRegex(ValueError, r"reference profile 1.*budget"):
-                self.run_import(adjacent_hexes(), reference=reference)
+            result, details = self.run_import(adjacent_hexes(), reference=reference)
+            self.assertNotIn("line_profiles", result)
+            self.assertRegex(details["reference_error"], r"reference profile 1.*budget")
 
     def test_reference_json_rejects_duplicate_keys_constants_and_wrong_levels(self):
         oracle = ref_profile(spec([0, 0, 0], [2, 0, 0], fractions=[0, 1]), [300, 320])
@@ -203,8 +213,38 @@ class FieldProbeTests(unittest.TestCase):
             (valid[:-1], "invalid reference JSON"),
             (valid.replace("300", "1" + "0" * 400), "expected one finite value"),
         ]:
-            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
-                self.run_import(adjacent_hexes(), reference=("oracle.json", source.encode(), "ref"))
+            with self.subTest(message=message):
+                result, details = self.run_import(adjacent_hexes(), reference=("oracle.json", source.encode(), "ref"))
+                self.assertEqual(len(result["points"]), 12)
+                self.assertEqual(details["reference_status"], "invalid")
+                self.assertRegex(details["reference_error"], message)
+
+    def test_field_checks_each_requested_reference_once_and_embeds_only_matches(self):
+        point = spec([0, 0, 0], [2, 0, 0], fractions=[0, .5, 1])
+        cell = spec([0, 0, 0], [2, 0, 0], "cell", fractions=[0, .5, 1])
+        document = {"length_unit": "m", "profiles": [
+            ref_profile(point, [300, 999, 320]), ref_profile(cell, [315, 315, 335]),
+        ]}
+        from packages.science import field_probe
+
+        with patch.object(field_probe, "validate_equipment", side_effect=AssertionError("online schema walk")), \
+                patch.object(field_probe, "_compare_profile_reference",
+                             wraps=field_probe._compare_profile_reference) as compare:
+            result, details = self.run_import(adjacent_hexes(), [point, cell],
+                                              ("oracle.json", json.dumps(document).encode(), "ref"))
+        self.assertEqual(compare.call_count, 2)
+        self.assertEqual(details["reference_status"], "mismatch")
+        self.assertEqual([row["reference_status"] for row in details["profiles"]], ["mismatch", "matched"])
+        self.assertNotIn("reference", result["line_profiles"][0])
+        self.assertEqual(result["line_profiles"][1]["reference"]["reference_artifact_id"], "ref")
+        validate_equipment(result)
+
+    def test_valid_explicit_sampling_survives_malformed_reference(self):
+        line = spec([0, 0, 0], [2, 0, 0], fractions=[0, .5, 1])
+        result, details = self.run_import(adjacent_hexes(), [line], ("oracle.json", b"{", "ref"))
+        self.assertEqual(sampled(result["line_profiles"][0]), [300, 310, 320])
+        self.assertEqual(details["reference_status"], "invalid")
+        self.assertEqual(details["profiles"][0]["reference_status"], "invalid")
 
     def test_mesh_only_and_unsupported_probe_type(self):
         points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
@@ -212,8 +252,13 @@ class FieldProbeTests(unittest.TestCase):
         result, details = self.run_import(blob)
         self.assertNotIn("line_profiles", result)
         self.assertEqual(details["reference_profile_count"], 0)
+        line = spec([0, 0, 0], [1, 0, 0], fractions=[0, 1])
         with self.assertRaisesRegex(ValueError, "unsupported VTK probe cell type 5"):
-            self.run_import(blob, [spec([0, 0, 0], [1, 0, 0])])
+            self.run_import(blob, [line])
+        reference = {"length_unit": "m", "profiles": [ref_profile(line, [0, 1])]}
+        result, details = self.run_import(blob, reference=reference)
+        self.assertNotIn("line_profiles", result)
+        self.assertRegex(details["reference_error"], "unsupported VTK probe cell type 5")
 
 
 if __name__ == "__main__":

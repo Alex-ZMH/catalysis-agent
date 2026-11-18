@@ -16,7 +16,7 @@
 
 具体字段和示例见 [VASP 导入](vasp-import.md)、[动力学导入](kinetics-import.md) 和 [晶胞预检](cell.md)。
 
-轨迹和设备场的格式、单位、容差及支持范围见 [LAMMPS 导入](lammps-import.md)、[VTU 采样](equipment-import.md) 和 [VTU 文件编码](vtu-format.md)。两种导入都可以单独上传原件。上传独立参考后，运行清单将原件与参考分别记录为输入。比较失败时页面给出对应的帧或采样位置。
+轨迹和设备场的格式、单位、容差及支持范围见 [LAMMPS 导入](lammps-import.md)、[VTU 采样](equipment-import.md) 和 [VTU 文件编码](vtu-format.md)。两种导入都可以单独上传原件。上传独立参考后，运行清单将原件与参考分别记录为输入。比较在导入时执行一次。参考差异写入分析详情，实际计算值随原件保存。
 
 ## 数据与运行边界
 
@@ -104,6 +104,12 @@ python -m packages.recovery replay --data-dir "$RESTORE_ROOT" --project "$PROJEC
 先准备私有的备份目录和证据目录。将第一条命令返回的 `archive_sha256` 单独留存，作为恢复命令的 `RETAINED_SHA256`。选择独立的恢复数据根，其中该项目的位置必须空缺。复算使用第三个空目录，根据已保存的输入、参考文件和参数重新运行科学分析。报告列出原运行与复算运行对应的代码版本和工件哈希。用命令退出状态和逐项报告共同判断结果。
 
 使用 `python -m apps.server --data-dir "$RESTORE_ROOT" --project "$PROJECT" --operator "$REVIEWER"` 打开恢复副本。在「科学分析」的运行历史中选择原运行，核对清单中的参数、输入和结果工件，下载原文件核对 SHA-256。在「重计算计划」中选择历史审批，核对来源运行、文件哈希、操作员、事件和原 Slurm 作业号。已归档的合成 GPU 计算回执可以从作业号下方下载。恢复副本的审批历史只读，包含恢复前仍在待确认、可重试或待核对状态的记录。科学复算只生成独立运行记录。
+
+## DFT → MD 结构交接
+
+在 VASP 吸附结果的「DFT → MD 结构交接」中，选择体相、裸表面或吸附构型下载 LAMMPS 结构包。也可以展开独立的「DFT → MD 结构交接」表单，直接上传 POSCAR、CONTCAR 或含最终结构的 `vasprun.xml`。
+
+结构包包含 `structure.data`、`metadata.json` 和 `in.read_geometry`。导出使用 `units metal`、`atom_style atomic`，保留元素、原子顺序、周期晶胞和原真空间距。倾斜晶胞转换成 LAMMPS 的受限三斜表示，保持相对坐标和距离。项目内导出的元数据记录源运行和工件 ID，可回到原始 VASP 文件。结构包解压后可在已有 LAMMPS 环境中使用 `lmp -in in.read_geometry` 加载。开始动力学计算需要选择与体系匹配的势函数及积分、边界和系综设置。
 
 ## A1 内网账号、项目权限和审计
 

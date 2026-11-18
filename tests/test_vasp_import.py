@@ -8,6 +8,8 @@ from unittest import TestCase
 from unittest.mock import patch
 from xml.sax.saxutils import escape
 
+from jsonschema import ValidationError
+
 from packages.check import artifact_links
 from packages.science import adsorption, vasp
 
@@ -161,6 +163,17 @@ class VaspImportTests(TestCase):
         self.assertEqual(keyed["bridge"]["adsorption_energy"], -1)
         self.assertEqual(keyed["hollow"]["reasons"], ["unconverged"])
         self.assertEqual(keyed["variant"]["reasons"], ["electronic_method"])
+        observed = {row["logical_id"]: row for row in result["observed_adsorption"]}
+        self.assertEqual(observed["hollow"]["adsorption_energy_eV"], -2)
+        self.assertEqual(observed["variant"]["adsorption_energy_eV"], -4)
+        self.assertEqual(observed["hollow"]["contract_status"], "noncomparable")
+        self.assertEqual(observed["hollow"]["status"], "review")
+        self.assertNotIn("adsorption_energy", keyed["hollow"])
+        self.assertTrue(all(isinstance(run["energy_eV"], float) for run in extra["runs"]))
+        adsorption.validate_result({"results": result["results"]}, source)
+        observed["hollow"]["adsorption_energy_eV"] = -12
+        with self.assertRaisesRegex(ValidationError, "observed adsorption energy disagrees"):
+            adsorption.validate_result(result, source)
         self.assertEqual(source["gas_references"][0]["box_lengths_angstrom"], [18, 19, 20])
         top = next(row for row in extra["runs"] if row["logical_id"] == "top")
         self.assertEqual(top["energy_eV"], -21.5)
@@ -169,12 +182,32 @@ class VaspImportTests(TestCase):
         self.assertEqual(top["parent_raw_id"], "raw-upload")
         self.assertAlmostEqual(source["clean_slab"]["convergence"]["max_free_force_eV_per_angstrom"], 0.008)
 
-    def test_cell_cap_checks_every_role(self):
+    def test_cell_threshold_annotates_every_role(self):
         for limits in ([50, 50, 19], {"c": 19}):
-            with self.subTest(limits=limits), self.assertRaisesRegex(ValueError, "oxygen:.*20.0.*19.0.*c"):
-                self.run_import(options={"cell_limits_A": limits})
-        with self.assertRaisesRegex(ValueError, "at most 50"):
-            self.run_import(options={"cell_limits_A": [51, 50, 50]})
+            with self.subTest(limits=limits):
+                _, result, detail, _ = self.run_import(options={"cell_limits_A": limits})
+                gas = next(row for row in detail["runs"] if row["logical_id"] == "oxygen")
+                self.assertEqual(gas["cell_check"]["exceeded_axes"], ["c"])
+                self.assertIn("cell_size_exceeded", gas["annotations"])
+                self.assertIn("cell_size_exceeded", result["observed_adsorption"][0]["annotations"])
+
+        study, files = _study()
+        path = study["gas_references"][0]["file"]
+        files[path] = files[path].replace(b"<v>0 0 20</v>", b"<v>0 0 60</v>")
+        for options, expected in (({}, ["c"]), ({"cell_limits_A": {"c": 65}}, [])):
+            with self.subTest(options=options):
+                _, result, detail, _ = self.run_import(_bundle(study, files), options)
+                gas = next(row for row in detail["runs"] if row["logical_id"] == "oxygen")
+                self.assertEqual(gas["cell_check"]["lengths_A"]["c"], 60)
+                self.assertEqual(gas["cell_check"]["exceeded_axes"], expected)
+                self.assertEqual(result["observed_adsorption"][0]["adsorption_energy_eV"], -1.5)
+
+    def test_normal_import_validates_input_and_derives_once(self):
+        with (patch.object(adsorption, "validate_input", wraps=adsorption.validate_input) as validate,
+              patch.object(adsorption, "_outcomes", wraps=adsorption._outcomes) as derive):
+            self.run_import()
+        self.assertEqual(validate.call_count, 1)
+        self.assertEqual(derive.call_count, 1)
 
     def test_invalid_and_untrusted_files(self):
         study, files = _study()
@@ -203,12 +236,30 @@ class VaspImportTests(TestCase):
         with self.assertRaisesRegex(ValueError, "prior_relaxation_evidence_id"):
             self.run_import(_bundle(study, files))
 
-    def test_fixed_cell_requires_matching_ordered_vectors(self):
+    def test_fixed_cell_lattice_mismatch_is_annotated(self):
         study, files = _study()
         path = "top/vasprun.xml"
         files[path] = files[path].replace(b"<v>6 0 0</v>", b"<v>6.001 0 0</v>")
-        with self.assertRaisesRegex(ValueError, "top.*same ordered lattice vectors"):
-            self.run_import(_bundle(study, files))
+        source, result, detail, _ = self.run_import(_bundle(study, files))
+        row = next(item for item in result["observed_adsorption"] if item["logical_id"] == "top")
+        top = next(item for item in detail["runs"] if item["logical_id"] == "top")
+        self.assertFalse(top["lattice_check"]["matches_clean_slab"])
+        self.assertEqual(row["annotations"], ["lattice_mismatch"])
+        self.assertEqual(row["status"], "review")
+        self.assertEqual(row["adsorption_energy_eV"], -1.5)
+        self.assertEqual(top["energy_eV"], -21.5)
+        adsorption.validate_result(result, source)
+
+    def test_ambiguous_scf_at_nelm_keeps_reported_energy(self):
+        study, files = _study()
+        path = "top/vasprun.xml"
+        files[path] = files[path].replace(b'<i name="NELM">6</i>', b'<i name="NELM">3</i>')
+        _, result, detail, _ = self.run_import(_bundle(study, files))
+        row = next(item for item in result["observed_adsorption"] if item["logical_id"] == "top")
+        top = next(item for item in detail["runs"] if item["logical_id"] == "top")
+        self.assertEqual(top["convergence_status"], "uncertain")
+        self.assertIn("scf_limit_ambiguous", row["annotations"])
+        self.assertEqual(row["adsorption_energy_eV"], -1.5)
 
     def test_missing_scf_fields_need_supplementary_measured_residual(self):
         study, files = _study()

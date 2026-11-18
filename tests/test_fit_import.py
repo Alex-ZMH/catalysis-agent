@@ -3,11 +3,13 @@ import io
 import json
 import math
 import unittest
+from unittest.mock import patch
 import zipfile
 from xml.sax.saxutils import escape
 
 from jsonschema import ValidationError
 
+from packages.science import kinetics
 from packages.science.fit import _student_95, analyze
 from packages.science.kinetics import GAS_CONSTANT_J_PER_MOL_K, validate_result
 
@@ -113,6 +115,15 @@ class KineticsImportTests(unittest.TestCase):
         json.dumps((normalized, result, details), allow_nan=False)
         return normalized, result, details
 
+    def test_normal_fit_checks_design_once(self):
+        filename, blob, options = demo()
+        with (patch.object(kinetics, "_validate_design", wraps=kinetics._validate_design) as design,
+              patch.object(kinetics, "validate_result", side_effect=AssertionError("unexpected result recheck"))):
+            normalized, result, _ = analyze(filename, blob, options, "synthetic", "upload-1",
+                                             lambda *_: "uncertainty-1")
+        self.assertEqual(design.call_count, 1)
+        validate_result(result, normalized)
+
     def test_arrhenius_and_holdout_exclusion(self):
         filename, blob, options = demo()
         normalized, result, details = self.analyze(filename, blob, options, 'research')
@@ -173,14 +184,16 @@ class KineticsImportTests(unittest.TestCase):
         for dof, critical in ((1, 12.706205), (2, 4.302653), (3, 3.182446), (30, 2.042272)):
             self.assertAlmostEqual(_student_95(dof), critical, places=5)
 
-    def test_fit_quality_gates(self):
+    def test_fit_reports_values_above_reference_thresholds(self):
         filename, blob, options = demo()
-        for field, pattern in [('max_train_log_rmse', 'train log RMSE'),
-                               ('max_holdout_log_rmse', 'holdout log RMSE')]:
-            with self.subTest(field=field), self.assertRaisesRegex(ValueError, pattern):
-                limits = {'max_train_log_rmse': 0.2, 'max_holdout_log_rmse': 0.3, field: 1e-6}
-                self.analyze(filename, blob, options | {'acceptance': limits})
-        self.assertFalse(self.evidence)
+        limits = {'max_train_log_rmse': 1e-6, 'max_holdout_log_rmse': 1e-6}
+        _, result, details = analyze(filename, blob, options | {'acceptance': limits},
+                                     'synthetic', 'upload-1', lambda *_: 'uncertainty-1')
+        self.assertGreater(result['train_log_rmse'], limits['max_train_log_rmse'])
+        self.assertGreater(result['holdout_log_rmse'], limits['max_holdout_log_rmse'])
+        diagnostics = details['fit_diagnostics']
+        self.assertEqual(diagnostics['status'], 'above_configured_threshold')
+        self.assertEqual(len(diagnostics['threshold_notes']), 2)
 
     def test_rank_deficient_training(self):
         filename, blob, options = demo()

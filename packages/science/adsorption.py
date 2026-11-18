@@ -105,7 +105,9 @@ def validate_result(instance: dict, input_instance: dict) -> None:
     validate_input(input_instance)
     validate_payload("adsorption.result.schema.json", instance)
     outcomes = {result["structure_id"]: result for result in instance["results"]}
-    expected = _outcomes(input_instance)
+    reported = instance.get("observed_adsorption")
+    observed = [] if reported is not None else None
+    expected = _outcomes(input_instance, observed)
     require(len(outcomes) == len(instance["results"])
             and outcomes.keys() == {item["structure_id"] for item in expected},
             "Results must cover each configuration exactly once")
@@ -124,8 +126,22 @@ def validate_result(instance: dict, input_instance: dict) -> None:
         require(abs(candidate - item["adsorption_energy"]) <= Fraction("0.001"),
                 f"{structure_id} adsorption energy disagrees with input energies")
 
+    if observed is not None:
+        by_id = {row["structure_id"]: row for row in reported}
+        require(len(by_id) == len(reported) and by_id.keys() == outcomes.keys(),
+                "Observed adsorption must cover each configuration exactly once")
+        for item, formal in zip(observed, expected, strict=True):
+            structure_id = item["structure_id"]
+            row = by_id[structure_id]
+            require(abs(Fraction(str(row["adsorption_energy_eV"])) - item["adsorption_energy_eV"])
+                    <= Fraction("0.001"), f"{structure_id} observed adsorption energy disagrees with input energies")
+            require(row["contract_status"] == formal["status"] and set(row["reasons"]) == set(item["reasons"]),
+                    f"{structure_id} observed adsorption metadata disagrees with the formal outcome")
+            status = "review" if row["reasons"] or row["annotations"] else "comparable"
+            require(row["status"] == status, f"{structure_id} observed status disagrees with its diagnostics")
 
-def _outcomes(instance):
+
+def _outcomes(instance, observed=None):
     clean = instance["clean_slab"]
     gas = {run["structure_id"]: run for run in instance["gas_references"]}
     clean_energy = Fraction(str(clean["energy_eV"]))
@@ -135,24 +151,29 @@ def _outcomes(instance):
                       for key, coefficient in config["reference_coefficients"].items()]
         outcome = {"structure_id": config["structure_id"]}
         reasons = list(_reasons(instance, config, references))
+        if not reasons or observed is not None:
+            cell_energy = Fraction(str(config["energy_eV"])) - clean_energy
+            gas_energy = sum(coefficient * Fraction(str(run["energy_eV"]))
+                             for run, coefficient in references)
+            energy = (cell_energy - gas_energy) / config["adsorbed_units"]
+        if observed is not None:
+            observed.append(dict(outcome, adsorption_energy_eV=energy, reasons=reasons))
         if reasons:
             outcomes.append(dict(outcome, status="noncomparable", reasons=reasons))
-            continue
-
-        cell_energy = Fraction(str(config["energy_eV"])) - clean_energy
-        gas_energy = sum(coefficient * Fraction(str(run["energy_eV"]))
-                         for run, coefficient in references)
-        energy = (cell_energy - gas_energy) / config["adsorbed_units"]
-        outcomes.append(dict(outcome, status="comparable", normalization="per_adsorbate",
-                             unit="eV", adsorption_energy=energy))
+        else:
+            outcomes.append(dict(outcome, status="comparable", normalization="per_adsorbate",
+                                 unit="eV", adsorption_energy=energy))
     return outcomes
 
 
-def derive_result(instance: dict) -> dict:
-    """Compute v1 results from validated adsorption inputs."""
+def derive_result(instance: dict, *, observed=None) -> dict:
+    """Validate input and derive v1 results, optionally collecting unfiltered energies."""
     validate_input(instance)
-    outcomes = _outcomes(instance)
+    outcomes = _outcomes(instance, observed)
     for outcome in outcomes:
         if outcome["status"] == "comparable":
             outcome["adsorption_energy"] = float(outcome["adsorption_energy"])
+    if observed is not None:
+        for row in observed:
+            row["adsorption_energy_eV"] = float(row["adsorption_energy_eV"])
     return {"results": outcomes}

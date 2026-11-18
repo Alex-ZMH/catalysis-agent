@@ -188,6 +188,14 @@ def _time(options, frames, inferred):
     if {"step_origin", "time_origin"}.intersection(options):
         raise ValueError("step_origin and time_origin require dt")
     if unit is not None and any("time" in frame for frame in frames):
+        previous = None
+        for frame in frames:
+            value = frame.get("time")
+            if value is None:
+                raise ValueError("Row time must be supplied exactly in explicit mode")
+            if previous is not None and value <= previous:
+                raise ValueError("Explicit times must be strictly increasing within each stream")
+            previous = value
         return {"mode": "explicit", "unit": unit}
     for frame in frames:
         frame.pop("time", None)
@@ -221,13 +229,17 @@ def _index(rows, key, label, minimum, limit):
     return result
 
 
+class _ReferenceMismatch(ValueError):
+    pass
+
+
 def _match_keys(actual, expected, label):
     missing = actual.keys() - expected.keys()
     extra = expected.keys() - actual.keys()
     if missing:
-        raise ValueError(f"{label} missing from reference: {min(missing)}")
+        raise _ReferenceMismatch(f"{label} missing from reference: {min(missing)}")
     if extra:
-        raise ValueError(f"{label} only in reference: {min(extra)}")
+        raise _ReferenceMismatch(f"{label} only in reference: {min(extra)}")
 
 
 def _compare_vector(actual, expected, tolerance, label):
@@ -241,12 +253,14 @@ def _compare_vector(actual, expected, tolerance, label):
         _number(target, component)
         error = abs(Fraction(str(value)) - Fraction(str(target)))
         if error > tolerance:
-            raise ValueError(f"{component} mismatch ({value} vs {target}) exceeds absolute_tolerance")
+            raise _ReferenceMismatch(f"{component} mismatch ({value} vs {target}) exceeds absolute_tolerance")
         maximum = max(maximum, error)
     return float(maximum)
 
 
 def _verify(dump, checks, reference, limits):
+    if not isinstance(reference, tuple) or len(reference) != 3:
+        raise ValueError("reference must be a (filename, bytes, artifact_id) tuple")
     filename, content, artifact_id = reference
     if (not isinstance(artifact_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", artifact_id)
             or artifact_id == dump["raw_artifact_id"]):
@@ -256,9 +270,9 @@ def _verify(dump, checks, reference, limits):
         data = _object(json.loads(content, object_pairs_hook=_unique_object),
                        "length_unit coordinate_mode absolute_tolerance frames", "reference")
         if _unit_key(_unit(data["length_unit"], "reference length_unit")) != _unit_key(dump["length_unit"]):
-            raise ValueError("reference length_unit mismatch")
+            raise _ReferenceMismatch("reference length_unit mismatch")
         if data["coordinate_mode"] != dump["coordinate_mode"]:
-            raise ValueError("reference coordinate_mode mismatch")
+            raise _ReferenceMismatch("reference coordinate_mode mismatch")
         tolerance = data["absolute_tolerance"]
         if type(tolerance) not in (float, int) or _number(tolerance, "absolute_tolerance") < 0:
             raise ValueError("absolute_tolerance must be a finite nonnegative JSON number")
@@ -266,6 +280,7 @@ def _verify(dump, checks, reference, limits):
         expected = _index(data["frames"], "timestep", "reference step", 0, limits["max_frames"])
         frames = {frame["timestep"]: frame for frame in dump["frames"]}
         _match_keys(frames, expected, "step")
+        errors = []
         for step, check in zip(frames, checks):
             frame = frames[step]
             target = _object(expected[step], "cell atoms", f"step {step}")
@@ -276,14 +291,14 @@ def _verify(dump, checks, reference, limits):
                 raise ValueError(f"step {step} cell periodic requires three booleans")
             for axis, actual, wanted in zip("abc", cell["periodic"], pbc):
                 if actual != wanted:
-                    raise ValueError(f"step {step} cell periodic axis {axis} mismatch")
+                    raise _ReferenceMismatch(f"step {step} cell periodic axis {axis} mismatch")
             if "boundary_flags" in target_cell:
                 flags = target_cell["boundary_flags"]
                 if not isinstance(flags, list) or len(flags) != 3:
                     raise ValueError(f"step {step} boundary_flags requires three strings")
                 for axis, actual, wanted in zip("abc", check["boundary_flags"], flags):
                     if not isinstance(wanted, str) or actual != wanted.lower():
-                        raise ValueError(f"step {step} boundary_flags axis {axis} mismatch")
+                        raise _ReferenceMismatch(f"step {step} boundary_flags axis {axis} mismatch")
             vectors = target_cell["vectors"]
             if not isinstance(vectors, list) or len(vectors) != 3:
                 raise ValueError(f"step {step} cell requires three basis vectors")
@@ -301,9 +316,13 @@ def _verify(dump, checks, reference, limits):
                 label = f"step {step} atom id {atom_id}"
                 position = _object(target_atoms[atom_id], "position", label)["position"]
                 error = max(error, _compare_vector(atom["position"], position, tolerance, label))
-            check.update(max_abs_error=error, max_cell_abs_error=cell_error)
+            errors.append((error, cell_error))
+    except _ReferenceMismatch as exc:
+        raise _ReferenceMismatch(f"{filename}: {exc}") from exc
     except (ValueError, RecursionError) as exc:
         raise ValueError(f"{filename}: {exc}") from exc
+    for check, (error, cell_error) in zip(checks, errors):
+        check.update(max_abs_error=error, max_cell_abs_error=cell_error)
     return artifact_id
 
 
@@ -336,8 +355,6 @@ def compare_frozen(result, details, reference, *, max_reference_bytes=DEFAULT_RE
             raise ValueError(f"frozen MD frame check {index} has invalid boundary flags")
         frozen_checks.append(dict(check))
 
-    if not isinstance(reference, tuple) or len(reference) != 3:
-        raise ValueError("reference must be a (filename, bytes, artifact_id) tuple")
     atom_counts = [len(frame["atoms"]) for frame in dump["frames"]]
     limits = dict(_LIMITS, max_reference_bytes=max_reference_bytes)
     limits["max_frames"] = max(limits["max_frames"], len(dump["frames"]))
@@ -359,10 +376,12 @@ def compare_frozen(result, details, reference, *, max_reference_bytes=DEFAULT_RE
 
 
 def read_import(filename, content, options, raw_id, reference=None):
-    """Return a validated v1 MD result and raw/reference comparison details."""
+    """Parse a v1 MD dump and report optional reference comparison details."""
     options = {} if options is None else options
     if not isinstance(options, dict):
         raise ValueError("LAMMPS options must be an object")
+    if not isinstance(raw_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", raw_id):
+        raise ValueError("Invalid raw artifact ID")
     limits = {key: _integer(options.get(key, default), key, 1)
               for key, default in _LIMITS.items()}
     selection = options.get("coordinate_columns")
@@ -421,15 +440,18 @@ def read_import(filename, content, options, raw_id, reference=None):
         dump = {"raw_artifact_id": raw_id, "length_unit": length, "coordinate_mode": mode,
                 "frames": frames, "time": time}
         result = {"dump": dump}
-        validate_md(result)
-    except (ValueError, OverflowError, ValidationError) as exc:
-        message = exc.message if isinstance(exc, ValidationError) else str(exc)
-        raise ValueError(f"{filename}:{reader.line}: {message}") from exc
+    except (ValueError, OverflowError) as exc:
+        raise ValueError(f"{filename}:{reader.line}: {exc}") from exc
 
-    details = {"frame_checks": checks, "reference_verified": False}
+    details = {"frame_checks": checks, "reference_verified": False, "reference_status": "not_provided"}
     if style is not None:
         details["unit_style"] = style
     if reference is not None:
-        details["reference_artifact_id"] = _verify(dump, checks, reference, limits)
-        details["reference_verified"] = True
+        try:
+            details["reference_artifact_id"] = _verify(dump, checks, reference, limits)
+        except ValueError as exc:
+            details["reference_status"] = "mismatch" if isinstance(exc, _ReferenceMismatch) else "invalid"
+            details["reference_error"] = str(exc)
+        else:
+            details.update(reference_verified=True, reference_status="matched")
     return result, details

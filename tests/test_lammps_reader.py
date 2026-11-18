@@ -1,6 +1,7 @@
 import copy
 import json
 import unittest
+from unittest.mock import patch
 
 from packages.science.imports import validate_md
 from packages.science.lammps import read_import
@@ -129,8 +130,21 @@ class LammpsReaderTests(unittest.TestCase):
         ):
             ref = copy.deepcopy(self.ref)
             mutate(ref, path, value)
-            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
-                self.read(self.dump, {"length_unit": "angstrom"}, ref)
+            with self.subTest(message=message):
+                raw, details = self.read(self.dump, {"length_unit": "angstrom"}, ref)
+                self.assertEqual(raw, self.read(self.dump, {"length_unit": "angstrom"})[0])
+                self.assertFalse(details["reference_verified"])
+                self.assertRegex(details["reference_error"], message)
+                self.assertTrue(all(row["max_abs_error"] is None for row in details["frame_checks"]))
+
+    def test_invalid_json_does_not_rewalk_or_block_the_dump(self):
+        with patch("packages.science.lammps.validate_md", side_effect=AssertionError("online schema walk")):
+            result, details = read_import("dump", self.dump.encode(), {"length_unit": "angstrom"},
+                                          "raw_dump", ("oracle.json", b"{", "ref"))
+        validate_md(result)
+        self.assertEqual(details["reference_status"], "invalid")
+        self.assertIn("oracle.json", details["reference_error"])
+        self.assertEqual(len(result["dump"]["frames"]), 2)
 
     def test_reference_tolerance_is_inclusive(self):
         self.ref["absolute_tolerance"] = 0.1
@@ -142,8 +156,9 @@ class LammpsReaderTests(unittest.TestCase):
         for declared, expected in (("Mm", "mm"), ("μM", "μm"), ("NM", "nm"), ("A", "a")):
             with self.subTest(declared=declared, expected=expected):
                 self.ref["length_unit"] = expected
-                with self.assertRaisesRegex(ValueError, "reference length_unit mismatch"):
-                    self.read(self.dump, {"length_unit": declared}, self.ref)
+                _, details = self.read(self.dump, {"length_unit": declared}, self.ref)
+                self.assertEqual(details["reference_status"], "mismatch")
+                self.assertIn("reference length_unit mismatch", details["reference_error"])
 
         self.ref["length_unit"] = "Å"
         _, details = self.read(self.dump, {"length_unit": "angstrom"}, self.ref)

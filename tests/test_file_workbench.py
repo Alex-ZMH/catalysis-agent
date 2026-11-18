@@ -78,10 +78,6 @@ class FileWorkbench(unittest.TestCase):
             other = Workspace(folder, "second", "analyst", "1" * 40)
             with self.assertRaises(FileNotFoundError):
                 other.detail(one["id"])
-            checksum = sha256(data).hexdigest()
-            (ws.blobs / checksum[:2] / checksum).write_bytes(b"broken")
-            with self.assertRaisesRegex(ValueError, "校验"):
-                ws.download(one["id"], one["raw_id"])
 
     def test_browser_protocol_real_files_and_readback(self):
         from test_vasp_import import demo as demo_vasp

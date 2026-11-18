@@ -77,13 +77,13 @@
 - 读最后一个 `calculation` 的晶格、分数坐标、力和 **`energy/i[@name='e_fr_energy']`**。这是含展宽熵项的电子自由能口径。各成员统一使用这一项，单位为 eV，输出按每个吸附单元归一化。
 - 从 `atominfo` 的原子和类型表交叉检查组成，读取 POTCAR 标题和价电子数。从展开参数和 INCAR 读取泛函、截断能、展宽、自旋、色散及 Dudarev DFT+U。这一版本支持每个元素一种 POTCAR 类型，使用 XML 标题判断势的一致性。相同标题的 POTCAR 内容差异须由提交者核实。仅支持无自定义偏移的 Gamma 或 Monkhorst–Pack 自动网格。气相要求单 Gamma 点。
 - XML 中缺省的 `METAGGA`、`LSORBIT`、`LNONCOLLINEAR`、`ISPIN`、`LHFCALC`、`LDAU`、`IVDW`、`LUSE_VDW`、`ISMEAR`、`SIGMA` 分别使用未启用、关闭、关闭、1、关闭、关闭、0、关闭、1、0.2 的常规默认值。对 XML 缺失或空白的上述参数，也可在对应运行添加 `missing_parameters`，以 VASP 文本值补充，比如 `{"GGA":"PE","LSORBIT":"F"}`。此对象还接受缺失的 `GGA`、`ENCUT`、`NELECT`、`EDIFF`、`EDIFFG`、`NELM`、`NSW`、`IBRION`。补充值须由协议证据支持，有 XML 值时不能覆盖。
-- 电子筛选取末两次 SCF 的 `e_fr_energy` 和 `e_wo_entrp` 两项能量变化的最大绝对值，与 `EDIFF` 比较。这是基于 XML 打印精度的代理量。若达到 `NELM`，且代理量仍超阈值，则标记未收敛。若达到 `NELM` 但代理量未超阈值，则导入失败，无法凭输出精度确认停止原因。末步缺少第二个 SCF 记录时，需在清单添上有协议文件支持的实测 `scf_residual_eV`。
+- 电子筛选取末两次 SCF 的 `e_fr_energy` 和 `e_wo_entrp` 两项能量变化的最大绝对值，与 `EDIFF` 比较。这是基于 XML 打印精度的代理量。若达到 `NELM`，且代理量仍超阈值，则标记未收敛。若达到 `NELM` 但代理量未超阈值，则标注达到电子迭代上限及收敛状态待定。末步缺少第二个 SCF 记录时，需在清单添上有协议文件支持的实测 `scf_residual_eV`。
 - 最大自由力按各原子可移动方向上的力投影计算。优先读末步或初始结构的选择性弛豫标志。若 XML 均缺失，在清单填 `free_directions: "all"` 或按原子顺序提供三列布尔数组，并在协议材料中说明。负 `EDIFFG` 给出力阈值。非负 `EDIFFG` 需要另给有协议依据的 `force_limit_eV_per_angstrom`，作为本研究的独立力筛选。
-- 结构坐标、逐晶格矢量长度、能量项、SCF 代理量来源和证据映射都写入详情。未通过方法、化学计量、参考或收敛检查的结果保留原因，排名仅使用可比较构型。截断或无法解析的 XML、缺失证据及超限晶胞会阻止导入。这里的吸附能是相对于所声明参考的能量差。
+- 结构坐标、逐晶格矢量长度、能量项、SCF 代理量来源和证据映射都写入详情。按所声明的参考可计算出吸附能时，数值写入 `result.json` 的 `observed_adsorption`，方法差异、化学计量和收敛情况并列记录。文件解析错误会在对应的输入记录上报。这里的吸附能是相对于所声明参考的能量差。
 
 ## UI 和本机预算
 
-入口为 `packages.science.vasp.analyze(filename, content, options, origin, raw_id, register)`。默认 `options={}`。可用 `{"cell_limits_A":[40,40,50]}` 或 `{"cell_limits_A":{"c":45}}` 收紧上限。省略的轴使用 50 Å。导入检查全部运行的末态晶胞，包括真空所在的晶格矢量，超限错误列出实际长度、阈值和轴。原晶胞不缩放。
+入口为 `packages.science.vasp.analyze(filename, content, options, origin, raw_id, register)`。默认 `options={}`。可用 `{"cell_limits_A":[40,40,50]}` 或 `{"cell_limits_A":{"c":45}}` 收紧上限。省略的轴使用 50 Å。导入检查全部运行的末态晶胞，包括真空所在的晶格矢量，超限记录实际长度、阈值和轴。导出结构沿用原晶胞。
 
 下列环境变量由本机管理员配置，单位为 MiB 的变量使用整数。调整后新导入读取相应配置，与科学参数分开。
 
@@ -100,6 +100,6 @@ ZIP 最多 128 个条目，`study.json` 最多 256 KiB，XML 嵌套限制 64 层
 
 ### 固定晶胞与缺失 SCF 列
 
-裸表面和各吸附构型必须采用同一套有序晶格矢量。逐分量比较仅允许 10⁻⁶ Å 的绝对误差，因此面内应变、更换晶格基底或者调换轴会阻止整次导入。错误会给出构型、文件和两套矢量。
+有序晶格矢量任一分量的差超过 10⁻⁶ Å 时，构型附带晶格差异说明。
 
 末两次 SCF 任一条缺少 `e_fr_energy` 或 `e_wo_entrp` 时，需用有全精度记录支持的 `scf_residual_eV`。在该运行现有的 `protocol_evidence_id` 所指文件中保存最后两次电子步的实测能量变化、运行标识及单位。残差填两种变化的最大绝对值。导入器不会使用 `e_0_energy` 或本征值代替缺失列。

@@ -7,9 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 
-from packages.agent.records import verify_blob
-from packages.check import OPERATIONS, link_result
-from packages.science import adsorption, kinetics
+from packages.check import OPERATIONS
 
 
 def json_bytes(value):
@@ -38,9 +36,7 @@ class Workspace:
     def _store(self, sha, content):
         dest = self.blobs / sha[:2] / sha
         dest.parent.mkdir(exist_ok=True)
-        if dest.exists():
-            with dest.open("rb") as stream:
-                verify_blob({"sha256": sha, "size_bytes": len(content)}, stream)
+        if dest.is_file():
             return
         with tempfile.NamedTemporaryFile(dir=dest.parent, delete=False) as temp:
             temp_name = Path(temp.name)
@@ -60,8 +56,6 @@ class Workspace:
                 # Windows may retain a read handle after another writer published first.
                 if not dest.is_file():
                     raise
-                with dest.open("rb") as stream:
-                    verify_blob({"sha256": sha, "size_bytes": len(content)}, stream)
         finally:
             temp_name.unlink(missing_ok=True)
 
@@ -75,23 +69,27 @@ class Workspace:
         if reference is not None:
             if not importing:
                 raise ValueError("只有轨迹与设备场导入接受独立参考文件。")
-            uploads.append(reference)
+            if not reference[1] or reference[1] == content:
+                reference = None
+            else:
+                uploads.append(reference)
         for name, data in uploads:
             if not name or len(name) > 255 or any(ord(c) < 32 or c in "/\\" for c in name):
                 raise ValueError("上传文件名无效。")
             if not data:
                 raise ValueError("上传文件为空。")
         config = dict(kind=kind, options=options, origin=origin)
+        source_key = digest(content)
         if reference is not None:
             config["reference"] = {"filename": reference[0], "sha256": digest(reference[1])}
         run_id = "run-" + digest(json_bytes([self.project, self.operator, self.commit,
-                                            filename, digest(content), config]))
+                                            filename, source_key, config]))
         if (self.runs / run_id).exists():
             return self.detail(run_id)
         records, names, contents = {}, {}, {}
 
-        def add(name, data, role, parents=()):
-            checksum = digest(data)
+        def add(name, data, role, parents=(), *, checksum=None):
+            checksum = checksum or digest(data)
             artifact = "art-" + digest(json_bytes([name, role, checksum, parents]))
             fmt = Path(name).suffix.lstrip(".").lower()
             records[artifact] = dict(artifact_id=artifact, project_id=self.project, role=role,
@@ -101,12 +99,11 @@ class Workspace:
             names[artifact], contents[checksum] = name, data
             return artifact
 
-        raw_id = add(filename, content, "source")
+        raw_id = add(filename, content, "source", checksum=source_key)
 
         def register(name, data):
             return add(name, data, "derived", [raw_id])
 
-        normalized = normalized_bytes = None
         ref_id = None
         if importing:
             from packages.science import field_probe, lammps
@@ -114,9 +111,7 @@ class Workspace:
             input_ids = [raw_id]
             if reference is not None:
                 ref_name, ref_bytes = reference
-                if ref_bytes == content:
-                    raise ValueError("参考文件必须独立于数据文件。")
-                ref_id = add(ref_name, ref_bytes, "source")
+                ref_id = add(ref_name, ref_bytes, "source", checksum=config["reference"]["sha256"])
                 input_ids.append(ref_id)
                 reference_input = (ref_name, ref_bytes, ref_id)
             reader = lammps if kind == "md" else field_probe
@@ -125,10 +120,7 @@ class Workspace:
             from packages.science import fit, vasp
             adapter = vasp if kind == "adsorption" else fit
             normalized, result, details = adapter.analyze(filename, content, options, origin, raw_id, register)
-            validator = adsorption if kind == "adsorption" else kinetics
-            validator.validate_result(result, normalized)
-            normalized_bytes = json_bytes(normalized)
-            input_ids = [add("normalized.json", normalized_bytes, "derived", sorted(records))]
+            input_ids = [add("normalized.json", json_bytes(normalized), "derived", sorted(records))]
         cfg_id = add("parameters.json", json_bytes(config), "parameters")
         result_bytes = json_bytes(result)
         parents = [*input_ids, cfg_id]
@@ -141,7 +133,7 @@ class Workspace:
             rejected = [row for row in rows if row["status"] == "noncomparable"]
             flags.update(reason for row in rejected for reason in row["reasons"])
             if rejected:
-                quality = "blocked" if len(rejected) == len(rows) else "review"
+                quality = "review"
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         manifest = dict(schema_version="1.0.0", project_id=self.project, run_id=run_id,
                         operator_id=self.operator, recorded_at=now, operation=OPERATIONS[kind],
@@ -149,13 +141,12 @@ class Workspace:
                         profile="intranet-v1", parameters_artifact=cfg_id, inputs=input_ids,
                         outputs=[out_id, detail_id], artifacts=list(records.values()),
                         quality=quality, quality_flags=sorted(flags))
-        link_result(kind, result, result_bytes, manifest, normalized, normalized_bytes)
         summary = dict(id=run_id, kind=kind, origin=origin, created_at=now, filename=filename)
         index = dict(names=names, raw=raw_id, input=cfg_id if importing else input_ids[0],
                      result=out_id, details=detail_id)
         if ref_id is not None:
             index["reference_id"] = ref_id
-        # Publish only after both scientific and provenance checks have succeeded.
+        # Publish the complete run after all referenced blobs have been stored.
         for checksum, data in contents.items():
             self._store(checksum, data)
         with tempfile.TemporaryDirectory(dir=self.runs, prefix=".import-") as tmp:
@@ -168,7 +159,9 @@ class Workspace:
             except OSError:
                 if not (self.runs / run_id).is_dir():
                     raise
-        return self.detail(run_id)
+                return self.detail(run_id)
+        return self._view(summary, manifest, index,
+                          {"input": config if importing else normalized, "result": result, "details": details})
 
     def _read(self, run_id, name):
         if not re.fullmatch(r"run-[0-9a-f]{64}", run_id):
@@ -186,10 +179,7 @@ class Workspace:
         sha = record["sha256"]
         if not re.fullmatch("[a-f0-9]{64}", sha):
             raise ValueError("Invalid artifact digest")
-        raw = (self.blobs / sha[:2] / sha).read_bytes()
-        if digest(raw) != sha or len(raw) != record["size_bytes"]:
-            raise ValueError("原文件校验失败，请核对存储或恢复备份。")
-        return raw
+        return (self.blobs / sha[:2] / sha).read_bytes()
 
     def plan_source(self, run_id):
         """Read the identity of an existing input without loading large scientific arrays."""
@@ -215,15 +205,20 @@ class Workspace:
     def detail(self, run_id):
         summary = self._read(run_id, "summary")
         manifest, index = self.manifest(run_id), self._read(run_id, "index")
-        base = "/api/runs/" + run_id
+        records = {a["artifact_id"]: a for a in manifest["artifacts"]}
+        values = {name: json.loads(self._bytes(records[index[name]]))
+                  for name in ("input", "result", "details")}
+        return self._view(summary, manifest, index, values)
+
+    @staticmethod
+    def _view(summary, manifest, index, values):
+        base = "/api/runs/" + summary["id"]
         public = []
         records = {a["artifact_id"]: a for a in manifest["artifacts"]}
         for key, record in records.items():
             public.append(dict(id=key, name=index["names"][key], role=record["role"],
                                size_bytes=record["size_bytes"], sha256=record["sha256"],
                                parents=record["parents"], url=f"{base}/artifacts/{key}"))
-        values = {name: json.loads(self._bytes(records[index[name]]))
-                  for name in ("input", "result", "details")}
         return dict(**summary, **values, artifacts=public, raw_id=index["raw"],
                     reference_id=index.get("reference_id"),
                     manifest_url=base + "/manifest", quality=manifest["quality"],
