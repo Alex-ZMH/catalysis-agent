@@ -117,6 +117,7 @@ class MDSlurmTests(unittest.TestCase):
         self.assertNotIn("velocity all create", script)
         self.assertNotIn("read_data", script)
         self.assertIn("fix md_integrator all nvt", script)
+        self.assertIn("dump_modify md_trajectory sort id units yes first yes", script)
         self.assertIn('"write_restart checkpoint.tmp" "shell mv checkpoint.tmp checkpoint.$(step:%.0f)"', script)
 
     def test_cancel_is_scoped_to_matching_controller_job(self):

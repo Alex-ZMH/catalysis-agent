@@ -157,7 +157,8 @@ def _script(config, pair_commands, structure, *, restarting=False):
         commands.append("thermo_modify temp md_temperature")
     commands.extend([
         f"dump md_trajectory all custom {config['dump_every']} trajectory.lammpstrj id type x y z ix iy iz vx vy vz",
-        "dump_modify md_trajectory sort id units yes format float %.17g",
+        ("dump_modify md_trajectory sort id units yes"
+         + (" first yes" if restarting else "") + " format float %.17g"),
     ])
     if interval := config.get("restart_every"):
         interval = min(interval, config["steps"])
