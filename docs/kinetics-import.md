@@ -81,3 +81,8 @@ CSV is comma-delimited UTF-8 with optional BOM and standard CSV quoting. XLSX is
 Uploads are limited to 8 MiB, 25,000 physical row indices, 256 columns, and 500,000 cells. XLSX also permits at most 256 ZIP entries, 8 MiB per expanded entry, and 32 MiB expanded total. The archive accepts stored or deflated entries and checks CRCs. XML external entities, DTDs, and network access are disabled or rejected. NumPy and lxml versions are pinned in `requirements.lock`.
 
 `tests/test_fit_import.py` exports `demo()` for an automatically mapped Arrhenius CSV and `demo_xlsx()` for a mapped two-reactant workbook. Each returns `(filename, bytes, options)` and includes an independent holdout batch.
+
+
+## 自然语言工作台入口
+
+服务启动时提供 `--mlcc-model-config /home/v100/mlcc-independent/config/worker.env`，方可启用已授权的 MLCC 模型调用。认证由独立模型进程读取，凭据不写入项目或日志；工作台进程的网络限制仍然生效。所选项目必须已有动力学实验表记录；在「自然语言动力学拟合」选择原始表，输入指令并提交。模型只接收指令、文件名、所选工作表及现有拟合模型，原始表由 V100 项目工具读取。结果界面可下载原表，项目内 `agent-requests/` 保存指令、模型调用和来源关联。模型调用属于用户已授权的公网出口例外。
