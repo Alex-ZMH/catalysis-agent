@@ -24,6 +24,7 @@ from jsonschema import ValidationError
 from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.egress import restrict_egress
 from packages.agent.md_slurm import MDSlurm, SchedulerUnavailable, SlurmBroker
+from packages.agent.model_broker import ModelBroker, ModelUnavailable
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import (Workspace, build_transport_inputs, json_bytes,
                                       read_transport_metadata)
@@ -110,6 +111,7 @@ ACTIONS = {
     (False, "/api/plans"): "project.plans.list",
     (False, "/api/backups"): "project.backups.list",
     (True, "/api/runs"): "project.run.create",
+    (True, "/api/agent/kinetics"): "project.agent.kinetics",
     (True, "/api/cell"): "project.cell.check",
     (True, "/api/md-handoff"): "project.structure.convert",
     (True, "/api/md-job"): "project.md.prepare",
@@ -380,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._post(path)
             else:
                 self._get(path)
+        except ModelUnavailable as error:
+            self._send(503, json_bytes({"error": str(error)[:800]}))
         except SchedulerUnavailable as error:
             self._send(503, json_bytes({"error": str(error)[:800]}))
         except RestoredApprovalError as error:
@@ -726,7 +730,59 @@ class Handler(BaseHTTPRequestHandler):
         package = build_job(name, raw, fields["options"], potential=potential, provenance=provenance)
         self._send(200, package, "application/zip", "lammps-md-job.zip")
 
+    def _agent_kinetics(self):
+        if self.server.model_broker is None:
+            raise ModelUnavailable("未配置 MLCC 模型通道。")
+        body = self._json_body()
+        if not isinstance(body.get("instruction"), str) or not body["instruction"].strip():
+            raise ValueError("请输入拟合指令。")
+        source_run, artifact_id = body.get("source_run_id"), body.get("source_artifact_id")
+        if not isinstance(source_run, str) or not isinstance(artifact_id, str):
+            raise ValueError("请选择项目内实验表。")
+        store = self.workspace
+        source = store.detail(source_run)
+        if source["kind"] != "kinetics":
+            raise ValueError("请选择已有动力学实验表。")
+        manifest = store.manifest(source_run)
+        artifact = next((a for a in manifest["artifacts"] if a["artifact_id"] == artifact_id), None)
+        if not artifact or artifact["role"] != "source":
+            raise ValueError("请选择实验原表。")
+        filename, content = store.download(source_run, artifact_id)
+        config = json.loads(store.download(source_run, manifest["parameters_artifact"])[1])
+        options = dict(config.get("options", {}))
+        sheet = body.get("sheet")
+        if sheet:
+            options["sheet"] = sheet
+        elif source.get("details", {}).get("sheet"):
+            options["sheet"] = source["details"]["sheet"]
+        requested = {"instruction": body["instruction"], "filename": filename,
+                     "sheet": options.get("sheet"), "existing_model": options.get("model", "arrhenius_known_k")}
+        decision = self.server.model_broker.call(requested)
+        options["model"] = decision["arguments"]["model"]
+        if not self.server.analysis_slots.acquire(blocking=False):
+            raise ModelUnavailable("本机分析进程正忙，请稍后重试。")
+        try:
+            result = store.analyze("kinetics", filename, content, options, source["origin"])
+        finally:
+            self.server.analysis_slots.release()
+        record_id = "agent-" + uuid4().hex
+        record = {"id": record_id, "project_id": store.project, "instruction": body["instruction"],
+                  "model": decision["model"], "tool": decision["tool"], "tool_call_id": decision["call_id"],
+                  "source": {"project_id": store.project, "filename": filename, "sheet": options.get("sheet"),
+                             "run_id": source_run, "artifact_id": artifact_id},
+                  "run_id": result["id"], "fitting_model": options["model"],
+                  "created_at": datetime.now(timezone.utc).isoformat()}
+        directory = store.runs.parent / "agent-requests"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        (directory / (record_id + ".json")).write_bytes(json_bytes(record))
+        if self.audit_event is not None:
+            self.audit_event.update(run_id=result["id"], source_run_id=source_run, artifact_id=artifact_id)
+        self._send(200, json_bytes({**record, "result": self._run_view(result)}))
+
     def _post(self, path):
+        if path == "/api/agent/kinetics":
+            self._agent_kinetics()
+            return
         if path == "/api/engineering":
             record = self.workspace.create_engineering(self._json_body())
             if self.audit_event is not None:
@@ -878,6 +934,8 @@ class WorkbenchServer(ThreadingHTTPServer):
 
     def server_close(self):
         try:
+            if getattr(self, "model_broker", None) is not None:
+                self.model_broker.close()
             super().server_close()
         finally:
             if self.md_broker is not None:
@@ -926,6 +984,7 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
     server.data_dir, server.commit = data_dir, commit
     server.slurm_receipts, server.approvals = receipts, approvals
     server.synthetic_submission = approvals is not None and approvals.scheduler is not None
+    server.model_broker = None
     server.workspace, server.assets = store, assets
     server.upload_limit = max_upload_mib * 1024 * 1024
     server.analysis_slots = threading.BoundedSemaphore(workers)
@@ -948,11 +1007,14 @@ def main():
     parser.add_argument("--access-policy", type=Path)
     parser.add_argument("--audit-log", type=Path)
     parser.add_argument("--backup-root", type=Path)
+    parser.add_argument("--mlcc-model-config", type=Path, help="Enable the explicitly authorized MLCC model bridge")
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
                      args.max_upload_mib, args.workers, args.a6_synthetic_slurm,
                      access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root,
                      md_slurm_config=args.md_slurm_config) as server:
+        if args.mlcc_model_config is not None:
+            server.model_broker = ModelBroker(args.mlcc_model_config)
         if server.access is not None:
             restrict_egress()
             server.audit.record(dict(time=datetime.now(timezone.utc).isoformat(),
