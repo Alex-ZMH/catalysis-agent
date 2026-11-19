@@ -184,6 +184,73 @@ class TransportRunImportTests(unittest.TestCase):
             self.assertIn("plan", view["raw_ids"])
             validate_run(store.manifest(view["id"]))
 
+    def test_authorized_metadata_driving_is_persisted_with_verified_raw_lineage(self):
+        driving = {
+            "schema_version": 1,
+            "axis": "x",
+            "requested": {"temperature": {"mode": "thermostat_slabs", "hot_K": 320}},
+            "measured": {"gradients": {"temperature": {"value": None}}},
+        }
+        native_metadata = json.dumps({
+            "schema": "md_transport.v1",
+            "lammps_units": "metal",
+            "driving": driving,
+            "provenance": {
+                "plan_id": "plan-transport-01", "job_id": "1023_7",
+                "source_files": ["transport_profile.dat", "transport_global.dat",
+                                 "transport_metadata.json"],
+            },
+        }).encode()
+        plan = {
+            "id": "plan-transport-01", "state": "submitted", "job_id": "1023_7",
+            "spec": {"workflow": "md-lammps", "mode": "slurm-md", "origin": "research",
+                     "config": {"transport_sampling": {"enabled": True,
+                                                         "channels": ["heat_profile", "heat_global"],
+                                                         "fields": ["temperature"], "outputs": {
+                                                             "profile": "transport_profile.dat",
+                                                             "global_flux": "transport_global.dat",
+                                                             "metadata": "transport_metadata.json",
+                                                         }}}},
+        }
+
+        class Approvals:
+            def get(self, plan_id):
+                self.asserted = plan_id
+                return plan
+
+        class Scheduler:
+            values = {"transport_profile.dat": PROFILE, "transport_global.dat": GLOBAL,
+                      "transport_metadata.json": native_metadata}
+
+            def artifact(self, current, name):
+                if current is not plan:
+                    raise AssertionError("artifact read used a different plan record")
+                raw = self.values[name]
+                return BytesIO(raw), len(raw)
+
+        options = {"mode": "conductivity",
+                   "columns": {"position": "Coord1", "field": "temp", "flux": "v_q"},
+                   "units": {"position": "angstrom", "field": "K",
+                             "flux": "eV/(angstrom^2*ps)"}}
+        normalized, files, verification, plan_origin = resolve_plan_transport(
+            Approvals(), Scheduler(), plan["id"], plan["job_id"], options, 8 * 1024 * 1024)
+        self.assertEqual(verification["metadata"]["driving"], driving)
+        self.assertTrue(verification["execution"]["verified"])
+        primary = files.pop("transport_profile")
+        with tempfile.TemporaryDirectory() as folder:
+            store = Workspace(folder, "project", "analyst", "1" * 40)
+            view = store.analyze("md_transport", *primary, normalized, plan_origin,
+                                 transport_files=files,
+                                 transport_fields={"transport_plan_id": plan["id"],
+                                                   "transport_job_id": plan["job_id"]},
+                                 transport_verification=verification)
+            self.assertEqual(view["details"]["transport"]["driving"], driving)
+            self.assertTrue(view["execution"]["verified"])
+            self.assertIn("metadata", view["raw_ids"])
+            _, stored_metadata = store.download(view["id"], view["raw_ids"]["metadata"])
+            self.assertEqual(stored_metadata, native_metadata)
+            validate_run(store.manifest(view["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

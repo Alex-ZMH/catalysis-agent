@@ -19,6 +19,7 @@ _TRANSPORT_AXES = ("x", "y", "z")
 _TRANSPORT_COMPONENTS = ("xx", "yy", "zz", "xy", "xz", "yz")
 _TRANSPORT_COMPONENT_INDEX = dict(zip(_TRANSPORT_COMPONENTS, range(1, 7), strict=True))
 _TRANSPORT_PREFIX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,39}")
+_DRIVING_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,31}")
 _METAL_PRESSURE_VOLUME_PER_EV = 1.602176634e6
 
 
@@ -51,6 +52,226 @@ def _finite(value, name):
         raise ValueError(f"{name} must be finite")
     return result
 
+
+
+def _driving_region(raw, name, axis, length):
+    if (not isinstance(raw, dict) or raw.keys() != {"lo", "hi"}):
+        raise ValueError(f"{name} must contain only lo and hi")
+    lo = _finite(raw["lo"], f"{name}.lo")
+    hi = _finite(raw["hi"], f"{name}.hi")
+    if not 0 <= lo < hi <= length:
+        raise ValueError(f"{name} must lie inside the {axis} simulation box with lo < hi")
+    return {"lo": lo, "hi": hi}
+
+
+def _regions_overlap(first, second):
+    return max(first["lo"], second["lo"]) < min(first["hi"], second["hi"])
+
+
+def _driving_section(raw, name):
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"transport_driving.{name} must be an object")
+    enabled = raw.get("enabled", True)
+    if type(enabled) is not bool:
+        raise ValueError(f"transport_driving.{name}.enabled must be boolean")
+    if not enabled:
+        if raw.keys() != {"enabled"}:
+            raise ValueError(f"Disabled transport_driving.{name} accepts only enabled=false")
+        return None
+    return raw
+
+
+def _transport_driving(raw, steps, structure, *, integrator, boundary, initial_temperature):
+    """Normalize actual boundary driving controls without inferring gradients."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("transport_driving must be an object")
+    allowed = {"enabled", "axis", "temperature", "concentration", "shear"}
+    if raw.keys() - allowed:
+        raise ValueError("Invalid transport_driving fields")
+    enabled = raw.get("enabled")
+    if type(enabled) is not bool:
+        raise ValueError("transport_driving.enabled must be boolean")
+    if not enabled:
+        if raw.keys() != {"enabled"}:
+            raise ValueError("Disabled transport_driving accepts only enabled=false")
+        return {"enabled": False}
+    axis = raw.get("axis")
+    if axis not in _TRANSPORT_AXES:
+        raise ValueError("transport_driving.axis must be x, y, or z")
+    sections = {
+        name: _driving_section(raw.get(name), name)
+        for name in ("temperature", "concentration", "shear")
+    }
+    if not any(value is not None for value in sections.values()):
+        raise ValueError("Enabled transport_driving requires temperature, concentration, or shear")
+    axis_index = _TRANSPORT_AXES.index(axis)
+    length = structure["cell"]["lengths_A"][axis_index]
+    type_ids = {row["symbol"]: row["type_id"] for row in structure["species"]}
+    normalized = {"enabled": True, "axis": axis}
+
+    temperature = sections["temperature"]
+    if temperature is not None:
+        allowed_temperature = {
+            "enabled", "mode", "hot_K", "cold_K", "hot_region", "cold_region",
+            "damping_ps", "seed", "hot_seed", "cold_seed", "group_update_every",
+            "group_membership", "zero_random_force",
+        }
+        if temperature.keys() - allowed_temperature:
+            raise ValueError("Invalid transport_driving.temperature fields")
+        required = {"mode", "hot_K", "cold_K", "hot_region", "cold_region", "damping_ps", "seed"}
+        if not required <= temperature.keys():
+            raise ValueError("thermostat_slabs requires hot/cold temperatures, regions, damping_ps, and seed")
+        if temperature["mode"] != "thermostat_slabs":
+            raise ValueError("transport_driving.temperature.mode must be thermostat_slabs")
+        if integrator != "nve":
+            raise ValueError("thermostat_slabs requires integrator=nve so only the slab reservoirs thermostat")
+        hot = _number(temperature["hot_K"], "transport_driving.temperature.hot_K")
+        cold = _number(temperature["cold_K"], "transport_driving.temperature.cold_K")
+        if hot <= cold:
+            raise ValueError("transport_driving.temperature.hot_K must exceed cold_K")
+        hot_region = _driving_region(temperature["hot_region"],
+                                     "transport_driving.temperature.hot_region", axis, length)
+        cold_region = _driving_region(temperature["cold_region"],
+                                      "transport_driving.temperature.cold_region", axis, length)
+        if _regions_overlap(hot_region, cold_region):
+            raise ValueError("temperature hot_region and cold_region must not overlap")
+        damping = _number(temperature["damping_ps"], "transport_driving.temperature.damping_ps")
+        seed = _int(temperature["seed"], "transport_driving.temperature.seed", 900_000_000)
+        hot_seed = _int(temperature.get("hot_seed", seed),
+                        "transport_driving.temperature.hot_seed", 900_000_000)
+        cold_seed_default = seed + 1
+        if cold_seed_default > 900_000_000:
+            raise ValueError("transport_driving.temperature.seed is too large to derive cold_seed")
+        cold_seed = _int(temperature.get("cold_seed", cold_seed_default),
+                         "transport_driving.temperature.cold_seed", 900_000_000)
+        update_every = _int(temperature.get("group_update_every", 1),
+                            "transport_driving.temperature.group_update_every", 2**31 - 1)
+        zero_random_force = temperature.get("zero_random_force", True)
+        if type(zero_random_force) is not bool:
+            raise ValueError("transport_driving.temperature.zero_random_force must be boolean")
+        normalized["temperature"] = {
+            "mode": "thermostat_slabs", "hot_K": hot, "cold_K": cold,
+            "hot_region": hot_region, "cold_region": cold_region, "damping_ps": damping,
+            "seed": seed, "hot_seed": hot_seed, "cold_seed": cold_seed,
+            "group_update_every": update_every, "group_membership": "dynamic",
+            "zero_random_force": zero_random_force,
+        }
+
+    concentration = sections["concentration"]
+    if concentration is not None:
+        allowed_concentration = {
+            "enabled", "mode", "species", "regions", "temperature_K", "semi_grand", "ke",
+            "type_ids", "membership", "limitations",
+        }
+        if concentration.keys() - allowed_concentration:
+            raise ValueError("Invalid transport_driving.concentration fields")
+        if not {"mode", "species", "regions"} <= concentration.keys():
+            raise ValueError("atom_swap_reservoirs requires species and two reservoir regions")
+        if concentration["mode"] != "atom_swap_reservoirs":
+            raise ValueError("transport_driving.concentration.mode must be atom_swap_reservoirs")
+        species = concentration["species"]
+        if (not isinstance(species, list) or len(species) < 2 or len(set(species)) != len(species)
+                or any(not isinstance(label, str) or not _ELEMENT.fullmatch(label) for label in species)):
+            raise ValueError("transport_driving.concentration.species must contain at least two unique labels")
+        if any(label not in type_ids for label in species):
+            raise ValueError("transport_driving.concentration.species must match structure species labels")
+        regions = concentration["regions"]
+        if not isinstance(regions, list) or len(regions) != 2:
+            raise ValueError("atom_swap_reservoirs requires exactly two reservoir regions")
+        normalized_regions = []
+        names = set()
+        for index, region in enumerate(regions):
+            label = f"transport_driving.concentration.regions[{index}]"
+            required = {"name", "lo", "hi", "every", "attempts", "seed", "mu_eV"}
+            if (not isinstance(region, dict) or region.keys() != required):
+                raise ValueError(f"{label} requires name, lo, hi, every, attempts, seed, and mu_eV")
+            name = region["name"]
+            if not isinstance(name, str) or not _DRIVING_NAME.fullmatch(name) or name in names:
+                raise ValueError(f"{label}.name must be a unique safe region name")
+            names.add(name)
+            bounds = _driving_region({"lo": region["lo"], "hi": region["hi"]}, label, axis, length)
+            every = _int(region["every"], f"{label}.every", 2**31 - 1)
+            attempts = _int(region["attempts"], f"{label}.attempts", 2**31 - 1)
+            seed = _int(region["seed"], f"{label}.seed", 900_000_000)
+            chemical_potentials = region["mu_eV"]
+            if not isinstance(chemical_potentials, dict) or set(chemical_potentials) != set(species):
+                raise ValueError(f"{label}.mu_eV must contain one value per concentration species")
+            mu = {species_label: _finite(chemical_potentials[species_label],
+                                         f"{label}.mu_eV.{species_label}")
+                  for species_label in species}
+            normalized_regions.append({"name": name, **bounds, "every": every,
+                                       "attempts": attempts, "seed": seed, "mu_eV": mu})
+        if _regions_overlap(normalized_regions[0], normalized_regions[1]):
+            raise ValueError("concentration reservoir regions must not overlap")
+        swap_temperature = _number(concentration.get("temperature_K", initial_temperature),
+                                   "transport_driving.concentration.temperature_K")
+        semi_grand = concentration.get("semi_grand", True)
+        if semi_grand is not True:
+            raise ValueError("atom_swap_reservoirs requires semi_grand=true for a maintained chemical-potential reservoir")
+        ke = concentration.get("ke", "yes")
+        if ke not in ("yes", "no"):
+            raise ValueError("transport_driving.concentration.ke must be yes or no")
+        normalized["concentration"] = {
+            "mode": "atom_swap_reservoirs", "species": list(species),
+            "type_ids": {label: type_ids[label] for label in species},
+            "regions": normalized_regions, "temperature_K": swap_temperature,
+            "semi_grand": True, "ke": ke, "membership": "live_region",
+            "limitations": [
+                "Chemical-potential differences control the semi-grand response; they do not guarantee a target concentration or a fixed concentration gradient.",
+                "The region keyword selects atoms by their current position at each swap attempt; atoms are not assigned permanently to a reservoir.",
+                "Semi-grand atom/swap updates atom type but does not update per-atom charge or mass; verify that the selected types are compatible.",
+            ],
+        }
+
+    shear = sections["shear"]
+    if shear is not None:
+        allowed_shear = {"enabled", "mode", "tangential_axis", "wall_regions",
+                         "normal_axis", "membership", "limitations"}
+        if shear.keys() - allowed_shear:
+            raise ValueError("Invalid transport_driving.shear fields")
+        if shear.get("mode") == "sllod":
+            raise ValueError("transport_driving.shear.mode=sllod is not supported: sampling is orthogonal-only and triclinic-safe reference handling is not implemented")
+        if shear.get("mode") != "moving_walls":
+            raise ValueError("transport_driving.shear.mode must be moving_walls")
+        tangential_axis = shear.get("tangential_axis")
+        if tangential_axis not in _TRANSPORT_AXES or tangential_axis == axis:
+            raise ValueError("transport_driving.shear.tangential_axis must be a different Cartesian axis")
+        if boundary[axis_index] == "p":
+            raise ValueError("moving_walls requires a non-periodic boundary along the wall normal axis")
+        if any(abs(value) > 1e-12 for value in structure["cell"]["tilt_A"].values()):
+            raise ValueError("moving_walls currently requires an orthogonal simulation box")
+        wall_regions = shear.get("wall_regions")
+        if not isinstance(wall_regions, list) or len(wall_regions) != 2:
+            raise ValueError("moving_walls requires exactly two wall_regions")
+        normalized_walls = []
+        names = set()
+        for index, region in enumerate(wall_regions):
+            label = f"transport_driving.shear.wall_regions[{index}]"
+            required = {"name", "lo", "hi", "velocity_A_per_ps"}
+            if (not isinstance(region, dict) or region.keys() != required):
+                raise ValueError(f"{label} requires name, lo, hi, and velocity_A_per_ps")
+            name = region["name"]
+            if not isinstance(name, str) or not _DRIVING_NAME.fullmatch(name) or name in names:
+                raise ValueError(f"{label}.name must be a unique safe region name")
+            names.add(name)
+            bounds = _driving_region({"lo": region["lo"], "hi": region["hi"]}, label, axis, length)
+            velocity = _finite(region["velocity_A_per_ps"], f"{label}.velocity_A_per_ps")
+            normalized_walls.append({"name": name, **bounds, "velocity_A_per_ps": velocity})
+        if _regions_overlap(normalized_walls[0], normalized_walls[1]):
+            raise ValueError("shear wall regions must not overlap")
+        normalized["shear"] = {
+            "mode": "moving_walls", "normal_axis": axis, "tangential_axis": tangential_axis,
+            "wall_regions": normalized_walls, "membership": "static_region_group",
+            "limitations": [
+                "Moving wall atoms are excluded from the integration group and are prescribed by fix move; their force response is not integrated as fluid atoms.",
+                "The requested wall velocities do not establish a measured velocity gradient; use native velocity and momentum-flux samples to fit the response.",
+            ],
+        }
+    return normalized
 
 def _transport_components(axis, requested):
     tangential = {
@@ -215,7 +436,8 @@ def _transport_config(raw, steps, structure=None):
 def _config(config):
     if (not isinstance(config, dict) or not _REQUIRED <= config.keys()
             or config.keys() - _REQUIRED
-            - {"damping_ps", "structure_options", "restart_every", "transport_sampling"}):
+            - {"damping_ps", "structure_options", "restart_every", "transport_sampling",
+               "transport_driving"}):
         raise ValueError("Invalid MD configuration fields")
     integrator = config["integrator"]
     if integrator not in ("nve", "nvt"):
@@ -238,6 +460,8 @@ def _config(config):
         result["damping_ps"] = _number(config["damping_ps"], "damping_ps")
     if "transport_sampling" in config and not isinstance(config["transport_sampling"], dict):
         raise ValueError("transport_sampling must be an object")
+    if "transport_driving" in config and not isinstance(config["transport_driving"], dict):
+        raise ValueError("transport_driving must be an object")
     return result
 
 
@@ -282,6 +506,94 @@ def _transport_columns(sampling, structure):
                                       for axis in _TRANSPORT_AXES],
         }
     return profile, velocity, global_columns
+
+
+def transport_driving_metadata(config, structure):
+    """Describe requested driving separately from gradients measured in native output."""
+    driving = config.get("transport_driving")
+    if not driving or not driving.get("enabled"):
+        return None
+    sampling = config.get("transport_sampling")
+    outputs = sampling.get("outputs", {}) if sampling and sampling.get("enabled") else {}
+    profile_file = outputs.get("profile")
+    velocity_file = outputs.get("velocity")
+    gradients = {}
+    if "temperature" in driving:
+        gradients["temperature"] = {
+            "value": None, "unit": "K/angstrom", "axis": driving["axis"],
+            "source_file": profile_file,
+            "source_column": "temp",
+            "status": "fit_from_native_profile; not inferred from thermostat targets",
+        }
+    if "concentration" in driving:
+        gradients["concentration"] = {
+            "value": None, "unit": "mass_basis_per_angstrom", "axis": driving["axis"],
+            "source_file": profile_file,
+            "source_column": "v_transport_concentration_<type_id>",
+            "status": "fit_from_native_profile; chemical potentials do not imply a target gradient",
+        }
+    if "shear" in driving:
+        shear = driving["shear"]
+        component = "".join(sorted((shear["normal_axis"], shear["tangential_axis"])))
+        gradients["velocity"] = {
+            "value": None, "unit": "(angstrom/ps)/angstrom", "axis": shear["normal_axis"],
+            "source_file": velocity_file,
+            "source_column": {"x": "vx", "y": "vy", "z": "vz"}[shear["tangential_axis"]],
+            "status": "fit_from_native_velocity; wall speeds do not imply a measured gradient",
+        }
+        gradients["momentum_flux"] = {
+            "value": None, "unit": "bar", "axis": shear["normal_axis"],
+            "source_file": profile_file,
+            "source_column": f"v_transport_momentum_{component}",
+            "stress_component": component,
+            "status": "fit_from_native_momentum_flux; no peculiar-velocity correction applied",
+        }
+    injection = {
+        "energy": {
+            "thermo_columns": ["ecouple", "econserve"] if "temperature" in driving else [],
+            "units": "eV",
+            "interpretation": "ecouple/econserve and per-fix tally values are native reservoir exchange, not a fitted heat flux",
+        },
+        "momentum": {
+            "requested_wall_velocities": driving.get("shear", {}).get("wall_regions", []),
+            "stress_source": sampling.get("momentum", {}).get("stress_source")
+            if sampling and sampling.get("enabled") else None,
+            "convention": sampling.get("momentum", {}).get("convention")
+            if sampling and sampling.get("enabled") else None,
+            "peculiar_velocity_correction": False,
+        },
+        "swap_statistics": {
+            "thermo_columns": [
+                f"f_md_swap_{index}[{component}]"
+                for index in range(len(driving.get("concentration", {}).get("regions", [])))
+                for component in (1, 2)
+            ],
+            "interpretation": "cumulative atom/swap attempts and accepts per reservoir",
+            "restart": "fix atom/swap state is written to native restart files and the same fix is re-specified on restart",
+        },
+    }
+    if "temperature" in driving:
+        injection["energy"]["thermo_columns"].extend((
+            "f_md_hot_thermostat", "f_md_cold_thermostat",
+        ))
+        injection["energy"]["restart_limit"] = (
+            "fix langevin random-number state is not saved; restarts preserve the configured seeds but are statistical, not bitwise exact"
+        )
+    return {
+        "schema_version": 1,
+        "axis": driving["axis"],
+        "requested": driving,
+        "measured": {
+            "gradients": gradients,
+            "status": "not_computed_by_runner; fit only from paired native field and flux/profile outputs",
+            "initial_composition_is_not_a_maintained_gradient": True,
+        },
+        "injection": injection,
+        "limitations": [
+            "Boundary targets, chemical potentials, and wall velocities are requested controls; the resulting field and flux gradients must be measured from sampled output.",
+            "A short run or an initial profile is not evidence of steady state or a converged transport coefficient.",
+        ],
+    }
 
 
 def transport_metadata(config, structure):
@@ -368,6 +680,7 @@ def transport_metadata(config, structure):
             "global_flux": global_columns,
         },
         "files": dict(sampling["outputs"]),
+        "driving": transport_driving_metadata(config, structure),
         "analysis": {
             "md_transport": {
                 "profile_requires_explicit_mapping": True,
@@ -377,6 +690,76 @@ def transport_metadata(config, structure):
             }
         },
     }
+
+
+def _driving_block(axis, region):
+    bounds = ["INF", "INF", "INF", "INF", "INF", "INF"]
+    index = _TRANSPORT_AXES.index(axis) * 2
+    bounds[index] = format(region["lo"], ".17g")
+    bounds[index + 1] = format(region["hi"], ".17g")
+    return " ".join(bounds)
+
+
+def _driving_script(config, structure):
+    driving = config.get("transport_driving")
+    if not driving or not driving.get("enabled"):
+        return []
+    axis = driving["axis"]
+    type_ids = {row["symbol"]: row["type_id"] for row in structure["species"]}
+    lines = []
+    shear = driving.get("shear")
+    mobile_group = "all"
+    if shear:
+        wall_groups = []
+        for index, wall in enumerate(shear["wall_regions"]):
+            region_id = f"md_shear_region_{index}"
+            group_id = f"md_shear_wall_{index}"
+            lines.extend((
+                f"region {region_id} block {_driving_block(axis, wall)} units box",
+                f"group {group_id} region {region_id}",
+            ))
+            wall_groups.append(group_id)
+        lines.extend((
+            f"group md_shear_wall union {' '.join(wall_groups)}",
+            "group md_mobile subtract all md_shear_wall",
+        ))
+        mobile_group = "md_mobile"
+        tangential = shear["tangential_axis"]
+        component_index = {"x": 0, "y": 1, "z": 2}[tangential]
+        for index, wall in enumerate(shear["wall_regions"]):
+            velocity = ["0.0", "0.0", "0.0"]
+            velocity[component_index] = format(wall["velocity_A_per_ps"], ".17g")
+            lines.append(
+                f"fix md_shear_move_{index} md_shear_wall_{index} move linear {' '.join(velocity)} units box"
+            )
+
+    temperature = driving.get("temperature")
+    if temperature:
+        hot_region = "md_temperature_hot_region"
+        cold_region = "md_temperature_cold_region"
+        lines.extend((
+            f"region {hot_region} block {_driving_block(axis, temperature['hot_region'])} units box",
+            f"region {cold_region} block {_driving_block(axis, temperature['cold_region'])} units box",
+            f"group md_temperature_hot dynamic {mobile_group} region {hot_region} every {temperature['group_update_every']}",
+            f"group md_temperature_cold dynamic {mobile_group} region {cold_region} every {temperature['group_update_every']}",
+            f"fix md_hot_thermostat md_temperature_hot langevin {temperature['hot_K']:.17g} {temperature['hot_K']:.17g} {temperature['damping_ps']:.17g} {temperature['hot_seed']} tally yes zero {'yes' if temperature['zero_random_force'] else 'no'}",
+            f"fix md_cold_thermostat md_temperature_cold langevin {temperature['cold_K']:.17g} {temperature['cold_K']:.17g} {temperature['damping_ps']:.17g} {temperature['cold_seed']} tally yes zero {'yes' if temperature['zero_random_force'] else 'no'}",
+        ))
+
+    concentration = driving.get("concentration")
+    if concentration:
+        types = " ".join(str(type_ids[label]) for label in concentration["species"])
+        for index, reservoir in enumerate(concentration["regions"]):
+            region_id = f"md_swap_region_{index}"
+            mu = " ".join(format(reservoir["mu_eV"][label], ".17g")
+                           for label in concentration["species"])
+            lines.extend((
+                f"region {region_id} block {_driving_block(axis, reservoir)} units box",
+                f"fix md_swap_{index} {mobile_group} atom/swap {reservoir['every']} "
+                f"{reservoir['attempts']} {reservoir['seed']} {concentration['temperature_K']:.17g} "
+                f"semi-grand yes types {types} mu {mu} ke {concentration['ke']} region {region_id}",
+            ))
+    return lines
 
 
 def _transport_script(config, structure):
@@ -581,6 +964,8 @@ def _script(config, pair_commands, structure, *, restarting=False):
         # resolved structure masses, including explicit operator overrides.
         commands.extend(f"mass {row['type_id']} {row['mass']:.17g}" for row in structure["species"])
     commands.append(f"timestep {config['dt_ps']}")
+    driving = config.get("transport_driving")
+    integrate_group = "md_mobile" if driving and driving.get("shear") else "all"
     single = structure["atom_count"] == 1 and temperature > 0
     if single:
         # A single atom has no thermal DOF after subtracting COM motion.
@@ -589,15 +974,26 @@ def _script(config, pair_commands, structure, *, restarting=False):
     if temperature and not restarting:
         settings = "mom no rot no dist gaussian temp md_temperature" if single else "mom yes rot no dist gaussian"
         commands.append(f"velocity all create {temperature} {config['seed']} {settings}")
+    commands.extend(_driving_script(config, structure))
     if config["integrator"] == "nvt":
-        commands.append(f"fix md_integrator all nvt temp {temperature} {temperature} {config['damping_ps']}")
+        commands.append(f"fix md_integrator {integrate_group} nvt temp {temperature} {temperature} {config['damping_ps']}")
         if single:
             commands.append("fix_modify md_integrator temp md_temperature")
     else:
-        commands.append("fix md_integrator all nve")
+        commands.append(f"fix md_integrator {integrate_group} nve")
+    thermo_columns = ["step", "time", "temp", "pe", "ke", "etotal", "press"]
+    if driving and driving.get("enabled"):
+        thermo_columns.extend(("ecouple", "econserve"))
+        if driving.get("temperature"):
+            thermo_columns.extend(("f_md_hot_thermostat", "f_md_cold_thermostat"))
+        thermo_columns.extend(
+            f"f_md_swap_{index}[{component}]"
+            for index in range(len(driving.get("concentration", {}).get("regions", [])))
+            for component in (1, 2)
+        )
     commands.extend([
         f"thermo {config['thermo_every']}",
-        "thermo_style custom step time temp pe ke etotal press",
+        "thermo_style custom " + " ".join(thermo_columns),
     ])
     if single:
         commands.append("thermo_modify temp md_temperature")
@@ -642,6 +1038,22 @@ def build_job(filename, source_bytes, config, *, potential=None, provenance=None
             if tilt_line not in structure_data:
                 raise ValueError("Orthogonal transport structure is missing its zero-tilt data line")
             structure_data = structure_data.replace(tilt_line, b"", 1)
+    if "transport_driving" in config:
+        config["transport_driving"] = _transport_driving(
+            config["transport_driving"], config["steps"], structure,
+            integrator=config["integrator"], boundary=config["boundary"],
+            initial_temperature=config["initial_temperature_K"],
+        )
+        driving = config["transport_driving"]
+        sampling = config.get("transport_sampling")
+        if driving.get("enabled") and sampling and sampling.get("enabled"):
+            if sampling["axis"] != driving["axis"]:
+                raise ValueError("transport_sampling.axis must match transport_driving.axis so measured profiles use the driven normal")
+            shear = driving.get("shear")
+            if shear and "momentum_flux_profile" in sampling["channels"]:
+                component = "".join(sorted((shear["normal_axis"], shear["tangential_axis"])))
+                if component not in sampling["momentum"]["components"]:
+                    raise ValueError("shear sampling must include the normal/tangential momentum component for the requested wall flow")
     nonperiodic = [axis for axis, mode in enumerate(config["boundary"]) if mode != "p"]
     if nonperiodic:
         atoms = structure_data.split(b"\nAtoms # atomic\n\n", 1)[1]

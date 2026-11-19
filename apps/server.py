@@ -188,6 +188,20 @@ def _transport_source_roles(inputs):
             if role not in {"metadata", "provenance", "plan"}}
 
 
+def _transport_metadata_driving(sources):
+    """Read the native driving block from already-loaded metadata bytes once."""
+    pair = sources.get("transport_metadata")
+    if pair is None:
+        return None
+    try:
+        metadata = json.loads(pair[1].decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("授权计划 transport_metadata 必须是合法的 JSON 对象。") from error
+    if not isinstance(metadata, dict):
+        raise ValueError("授权计划 transport_metadata 必须是 JSON 对象。")
+    return metadata.get("driving")
+
+
 def resolve_uploaded_transport(approvals, filename, content, options, transport_files):
     """Parse an uploaded claim, but never promote it to server-verified trust."""
     inputs = build_transport_inputs(filename, content, options, transport_files)
@@ -265,6 +279,9 @@ def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, uploa
         "plan_id": plan_id, "job_id": job_id,
         "source_files": sorted(pair[0] for pair in sources.values()
                                 if pair[0] != f"{plan_id}.json")}}
+    driving = _transport_metadata_driving(sources)
+    if driving is not None:
+        metadata["driving"] = driving
     source_files = sorted(pair[0] for pair in sources.values())
     execution = {"plan_id": plan_id, "job_id": job_id, "source_files": source_files,
                  "verified": True,

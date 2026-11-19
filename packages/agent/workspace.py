@@ -288,8 +288,12 @@ class Workspace:
                        "source_job_id": analysis_options.get("source_job_id"),
                        "analysis": "direct-output"}
             if paired_transport:
-                details["transport"] = {"metadata": metadata, "provenance": execution,
-                                         "source_artifacts": raw_ids}
+                details["transport"] = {
+                    "metadata": metadata,
+                    "driving": metadata.get("driving"),
+                    "provenance": execution,
+                    "source_artifacts": raw_ids,
+                }
             input_ids = list(raw_ids.values()) if transport_mode else [raw_id]
         elif importing:
             from packages.science import field_probe, lammps

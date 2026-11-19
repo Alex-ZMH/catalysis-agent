@@ -106,6 +106,7 @@ def _write_transport_metadata(directory, bundle):
         "units": metadata["units"],
         "normalization": metadata["normalization"],
         "geometry_limit": metadata["geometry_limit"],
+        "driving": metadata.get("driving"),
     }
 
 
@@ -237,7 +238,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
         "engine": {"requested": str(engine), "path": None, "version": None, "version_argv": None,
                    "argv": None, "version_returncode": None, "returncode": None},
         "parameters": None, "units": None, "files": [], "thermo_rows": None, "error": None,
-        "transport": None,
+        "transport": None, "driving": None,
     }
     handlers = {signum: signal.signal(signum, note_signal) for signum in _SIGNALS}
     try:
@@ -270,6 +271,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
                 record["inputs"]["potential"] = original_name if isinstance(original_name, str) else "potential.eam.alloy"
             record["parameters"] = bundle["config"]
             record["units"] = bundle["structure"]["units"]
+            record["driving"] = md_job.transport_driving_metadata(bundle["config"], bundle["structure"])
             record["transport"] = _write_transport_metadata(directory, bundle)
         if not caught:
             record["phase"] = "version"
