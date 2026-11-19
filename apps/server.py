@@ -91,7 +91,7 @@ def form_fields(headers, data, *, md_job=False):
 
 
 PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})(?:/(confirm|reconcile))?")
-MD_PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/(status|cancel|restart|artifacts/([A-Za-z0-9.]+))")
+MD_PLAN_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/(status|cancel|restart|artifacts/([A-Za-z0-9][A-Za-z0-9_.-]*))")
 PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
               "equipment-simulation": "equipment"}
 
