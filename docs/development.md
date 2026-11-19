@@ -49,3 +49,10 @@ A1 已在 V100 完成双账号和双合成项目隔离验收。受管工作台�
 DFT → MD 结构交接已接到 VASP 分析结果和独立上传表单。V100 作业 `1032` 在 Firefox 分别导出了 VASP 吸附构型和 CONTCAR，测试版为 `c76a7a8`。两份结构包保存在 `/home/v100/projects/catalysis-agent/jobs/dft-md/20261118-handoff-01/results/`。在线分析直接发布数值，配置阈值与可选参考差异随结果记录。
 
 开发任务及优先级由[总任务清单](roadmap.md)维护。LAMMPS 作业配置和实际运行已由 V100 合成作业 `1033` 串联，工作台生成作业包后由命令行执行并导回原生轨迹。MLCC 的 RVE、FEM 等模块当前处于只读评估。[MLCC 模块盘点](mlcc-migration.md)
+
+
+## V100 合成项目常驻工作台
+
+当前 user systemd 服务为 `catalysis-workbench.service`，代码版本 `3600966`。服务和审计配置位于 `jobs/agent/20261119-service-01/`，数据根使用现有合成项目；账号策略保留原有账号并增加受限合成验收账号。正式数据、账号和授权到位后，由运维人员修改 `work/service.env` 中的数据根、策略、审计及备份路径，再重启服务。`--mlcc-model-config` 使用 MLCC 既有受控配置，模型接收获授权的工作台请求，不接收原表。
+
+服务仅监听 V100 回环地址，可通过 `ssh -L 8771:127.0.0.1:8771 v100` 转发访问；用户服务管理使用 `systemctl --user status|restart catalysis-workbench.service`。
