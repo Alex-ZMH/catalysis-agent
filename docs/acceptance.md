@@ -167,3 +167,7 @@ V100 受管工作台以合成结构和参数完成浏览器操作；接口使用
 V100 工作台人工确认短时合成作业。1055 因正交盒零倾斜标记导致分箱报错，记录保留；修复生成器后，新计划提交 1056，LAMMPS 正常完成 80 步并写出全局热流、空间剖面、分箱速度和元数据。项目内从 1056 的计划导入工作台，计划与作业号可追溯；该独立结构计划的原始来源为 unknown，展示的 synthetic 由用户声明。热与质结果为 16 原子短时合成计算的链路演示，不能视为稳定物性。动量分析已改用柯西应力 τxz 与 vx 沿 z 的梯度，10–80 步得到 −6.324046633×10⁻⁶ Pa·s；原 vz 版本保留作为历史记录。该短时合成结果直接展示，不作为稳定物性。
 
 在实现过程中，调试人员曾在 V100 临时目录直接运行 LAMMPS，未通过工作台确认且不符合约定目录，已停止；另有一次未经要求的历史整套测试，其中 2 项失败：计划返回字段断言和盲验损坏检测断言，未重跑且未确认其先后原因。采样及界面新功能的定向检查见批次日志。验收材料位于 /home/v100/projects/catalysis-agent/jobs/md/20261119-transport-sampling-01/，不迁移 RVE/FEM。
+
+### 1056 动量分量修正工作台验收
+
+复用 1056 的 `transport_profile.dat` 与 `transport_velocity.dat`，选择 `v_transport_momentum_xz`（柯西应力，bar）及 `vx`（Å/ps）沿 `Coord1`（z）的梯度，10–80 step。工作台运行 `run-77503860124674253b7bbc03f06dcbfbdcd8a7b6e66e6e39a60a7d788daba002` 显示 −6.324046633136052e-6 Pa·s；项目计划和作业号 1056 已关联。首次错误的 vz 映射运行保留供追溯，不作为该剪切分析验收。截图及记录见 `jobs/md/20261119-transport-sampling-01/results/momentum-xz-formula-correction.json`，使用 `screenshots/11-momentum-xz-formula-correction-result.png`。本次未重跑求解或轮询 Slurm；项目来源 synthetic 为用户声明，计划原来源 unknown。输出来自短时合成体系，直接展示拟合值，不作为稳定物性。
