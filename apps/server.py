@@ -97,6 +97,7 @@ PLAN_KINDS = {"vasp-relaxation": "adsorption", "md-simulation": "md",
 
 
 RUN_PATH = re.compile(r"/api/runs/(run-[0-9a-f]{64})(?:/(manifest|artifacts/(art-[0-9a-f]{64})))?")
+ENGINEERING_PATH = re.compile(r"/api/engineering/(eng-[0-9a-f]{32})(?:/(export))?")
 MD_EXPORT_PATH = re.compile(r"/api/runs/(run-[0-9a-f]{64})/artifacts/(art-[0-9a-f]{64})/md-data")
 PROJECT_PATH = re.compile(r"/api/projects/([a-zA-Z0-9][a-zA-Z0-9_-]{0,95})(/.*)")
 RECEIPT_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/receipt")
@@ -104,6 +105,8 @@ BACKUP_PATH = re.compile(r"/api/backups/([0-9a-f]{64})")
 COOKIE_NAME = "catalysis_session"
 ACTIONS = {
     (False, "/api/runs"): "project.runs.list",
+    (False, "/api/engineering"): "project.engineering.list",
+    (True, "/api/engineering"): "project.engineering.create",
     (False, "/api/plans"): "project.plans.list",
     (False, "/api/backups"): "project.backups.list",
     (True, "/api/runs"): "project.run.create",
@@ -118,6 +121,9 @@ ACTIONS = {
 def access_action(path, post):
     if (post, path) in ACTIONS:
         return ACTIONS[post, path], {}
+    if not post and (engineering := ENGINEERING_PATH.fullmatch(path)):
+        action = "project.engineering.export" if engineering[2] else "project.engineering.read"
+        return action, {"engineering_id": engineering[1]}
     if not post and (handoff := MD_EXPORT_PATH.fullmatch(path)):
         return "project.structure.export", {"run_id": handoff[1], "artifact_id": handoff[2]}
     if not post and (run := RUN_PATH.fullmatch(path)):
@@ -492,6 +498,22 @@ class Handler(BaseHTTPRequestHandler):
                 artifact["url"] = prefix + artifact["url"][4:]
         return view
 
+    def _engineering_view(self, record):
+        if self.server.access is None:
+            return record
+        prefix = "/api/projects/" + self.audit_event["project"]
+
+        def scope(value):
+            if isinstance(value, dict):
+                return {key: scope(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [scope(item) for item in value]
+            if isinstance(value, str) and value.startswith("/api/"):
+                return prefix + value[4:]
+            return value
+
+        return scope(record)
+
     def _get(self, path):
         if path in self.server.assets:
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
@@ -561,6 +583,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/runs":
             self._send(200, json_bytes({"runs": store.recent()}))
+            return
+        if path == "/api/engineering":
+            records = [self._engineering_view(record) for record in store.engineering_recent()]
+            self._send(200, json_bytes({"records": records}))
+            return
+        engineering = ENGINEERING_PATH.fullmatch(path)
+        if engineering:
+            record_id, suffix = engineering.groups()
+            if suffix == "export":
+                record = self._engineering_view(store.engineering_detail(record_id))
+                self._send(200, json_bytes(record),
+                           "application/json; charset=utf-8", f"engineering-{record_id}.json")
+            else:
+                self._send(200, json_bytes(self._engineering_view(
+                    store.engineering_detail(record_id))))
             return
         handoff = MD_EXPORT_PATH.fullmatch(path)
         if handoff:
@@ -690,6 +727,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, package, "application/zip", "lammps-md-job.zip")
 
     def _post(self, path):
+        if path == "/api/engineering":
+            record = self.workspace.create_engineering(self._json_body())
+            if self.audit_event is not None:
+                self.audit_event["engineering_id"] = record["id"]
+            self._send(200, json_bytes(self._engineering_view(record)))
+            return
         if (md := MD_PLAN_PATH.fullmatch(path)) and md[2] in {"cancel", "restart"}:
             self._md_plan_action(md)
             return

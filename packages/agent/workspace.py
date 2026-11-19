@@ -130,8 +130,10 @@ class Workspace:
         base = data_dir / "projects" / project
         self.base = base
         self.runs, self.blobs = base / "runs", base / "raw"
+        self.engineering = base / "engineering"
         self.runs.mkdir(parents=True, exist_ok=True)
         self.blobs.mkdir(parents=True, exist_ok=True)
+        self.engineering.mkdir(parents=True, exist_ok=True)
 
     def _store(self, sha, content):
         dest = self.blobs / sha[:2] / sha
@@ -370,6 +372,49 @@ class Workspace:
     def recent(self):
         runs = [json.loads(p.read_bytes()) for p in self.runs.glob("run-*/summary.json")]
         return sorted(runs, key=lambda r: r["created_at"], reverse=True)
+
+    def create_engineering(self, payload):
+        from packages.agent.engineering import build_record
+
+        record = build_record(self, payload)
+        destination = self.engineering / (record["id"] + ".json")
+        if destination.exists():
+            raise ValueError("Engineering record ID collision")
+        with tempfile.NamedTemporaryFile(dir=self.engineering, prefix=".engineering-",
+                                         suffix=".tmp", delete=False) as temp:
+            temporary = Path(temp.name)
+            try:
+                temp.write(json_bytes(record))
+                temp.flush()
+                os.fsync(temp.fileno())
+            except BaseException:
+                temp.close()
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return record
+
+    def engineering_recent(self):
+        from packages.agent.engineering import summary
+
+        records = [json.loads(path.read_bytes())
+                   for path in self.engineering.glob("eng-*.json")]
+        return sorted((summary(record) for record in records),
+                      key=lambda record: record["created_at"], reverse=True)
+
+    def engineering_detail(self, record_id):
+        if not re.fullmatch(r"eng-[0-9a-f]{32}", record_id):
+            raise FileNotFoundError("Unknown engineering record")
+        record = json.loads((self.engineering / (record_id + ".json")).read_bytes())
+        if record.get("project_id") != self.project or record.get("id") != record_id:
+            raise ValueError("Engineering record belongs to another project")
+        return record
+
+    def engineering_export(self, record_id):
+        return json_bytes(self.engineering_detail(record_id))
 
     def manifest(self, run_id):
         return self._read(run_id, "manifest")
