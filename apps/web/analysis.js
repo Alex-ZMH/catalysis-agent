@@ -331,6 +331,91 @@ function renderMdAnalysis(run, target) {
     target.append(section);
   }
 
+  function renderTransportDriving(run, section) {
+    const result = run.result ?? {};
+    const runDetails = run.details ?? {};
+    const candidates = [
+      result.transport_driving,
+      result.driving_metadata,
+      runDetails.driving,
+      runDetails.transport?.driving,
+      runDetails.transport?.metadata?.driving,
+      runDetails.parameters?.driving,
+      runDetails.parameters?.transport_driving,
+      run.transport,
+      run.driving,
+    ];
+    const driving = candidates.find(value => value && typeof value === "object"
+      && !Array.isArray(value) && (value.requested || value.measured || value.injection));
+    if (!driving) return;
+    const requested = driving.requested ?? {};
+    const modeLabels = {
+      temperature: "温度边界（热/冷 thermostat slab）",
+      concentration: "浓度边界（半大正则 atom/swap）",
+      shear: "剪切边界（移动壁）",
+    };
+    const activeModes = Object.keys(modeLabels).filter(key => requested[key]);
+    const panel = element("section", null, "ca-transport-driving-result");
+    panel.append(element("h5", "外部驱动：请求、测得梯度与注入"));
+    panel.append(metrics([
+      ["请求法向轴", requested.axis],
+      ["请求边界控制", activeModes.map(key => modeLabels[key]).join("、") || "未报告"],
+    ]));
+    panel.append(element("p",
+      "请求的温差、化学势差和墙速度是边界控制输入，不等于已经维持的场量梯度；测得梯度只接受原生剖面/速度输出的拟合。",
+      "ca-physical-note"));
+    panel.append(details("请求的外部驱动 JSON", requested));
+
+    const measured = driving.measured ?? {};
+    const gradients = measured.gradients ?? {};
+    const gradientLabels = {
+      temperature: "温度梯度",
+      concentration: "浓度梯度",
+      velocity: "速度梯度",
+      momentum_flux: "动量通量梯度/分量",
+    };
+    const gradientRows = Object.entries(gradients).map(([key, value]) => {
+      const item = value && typeof value === "object" && !Array.isArray(value) ? value : { value };
+      const measuredValue = item.value == null ? "未报告"
+        : Number.isFinite(item.value) ? [formatNumber(item.value), item.unit].filter(Boolean).join(" ")
+          : String(item.value);
+      const source = [item.source_file, item.source_column].filter(Boolean).join(" · ");
+      return [gradientLabels[key] ?? key, [measuredValue, source].filter(Boolean).join(" · ")];
+    });
+    panel.append(element("h6", "原生输出中的测得梯度"));
+    panel.append(metrics(gradientRows.length ? gradientRows : [["测得梯度", "未报告"]]));
+    if (measured.status) panel.append(element("p", measured.status, "ca-muted"));
+    if (measured.initial_composition_is_not_a_maintained_gradient) {
+      panel.append(element("p", "初始组成或初始剖面不代表维持中的浓度梯度。", "ca-warning"));
+    }
+
+    const injection = driving.injection ?? {};
+    const energy = injection.energy ?? {};
+    const momentum = injection.momentum ?? {};
+    const swaps = injection.swap_statistics ?? {};
+    const injectionRows = [];
+    if (Object.keys(energy).length) {
+      injectionRows.push(["能量交换", [energy.thermo_columns?.join("、"), energy.units].filter(Boolean).join(" · ") || "已配置"]);
+      if (energy.interpretation) injectionRows.push(["能量解释", energy.interpretation]);
+    }
+    if (Object.keys(momentum).length) {
+      injectionRows.push(["动量/应力来源", [momentum.stress_source, momentum.convention].filter(Boolean).join(" · ") || "未报告"]);
+      injectionRows.push(["偏置速度修正", momentum.peculiar_velocity_correction === false ? "未使用" : "未报告"]);
+    }
+    if (Object.keys(swaps).length) {
+      injectionRows.push(["交换统计", swaps.thermo_columns?.join("、") || "已配置"]);
+      if (swaps.interpretation) injectionRows.push(["交换解释", swaps.interpretation]);
+    }
+    panel.append(element("h6", "能量、动量与交换注入/回执"));
+    panel.append(metrics(injectionRows.length ? injectionRows : [["注入回执", "未报告"]]));
+    panel.append(details("完整驱动回执", {
+      measured,
+      injection,
+      limitations: driving.limitations,
+    }));
+    section.append(panel);
+  }
+
   function renderTransport(run, target) {
     const result = run.result;
     if (!result) return;
@@ -371,6 +456,7 @@ function renderMdAnalysis(run, target) {
       ["入选样本数", result.selection?.selected_count],
       ["输出位置数", result.profile?.length],
     ]));
+    renderTransportDriving(run, section);
 
     const driving = result.driving ?? run.details?.parameters?.driving;
     const drivingLabels = { gradient_imposed: "施加梯度", flux_imposed: "施加通量" };
@@ -671,7 +757,10 @@ function renderMdAnalysis(run, target) {
         : (result.line_profiles ?? []).some(profile => profile.reference);
       const referenceNote = run.details?.reference_comparison;
       const comparison = element("p", referenceNote?.error || run.details?.reference_error
-        || (compared ? "已与独立参考比较" : "已读取原始输出"), "ca-origin");
+        || (compared ? "已与独立参考比较"
+          : run.kind === "md_transport" && run.origin === "synthetic"
+            ? "合成验收输入 · 已读取原始输出（非独立参考）"
+            : "已读取原始输出"), "ca-origin");
       comparison.id = "analysis-a5-comparison";
       science.append(comparison);
       if (run.kind === "md_transport") renderTransport(run, science);
@@ -970,6 +1059,11 @@ function renderMdAnalysis(run, target) {
             </select></label>
             <label>来源计划 ID（与元数据核对）<input name="transport_source_plan_id" maxlength="128"></label>
             <label>来源作业号（与元数据核对）<input name="transport_source_job_id" maxlength="128"></label>
+            <div class="ca-md-actions ca-transport-import-actions">
+              <button id="analysis-transport-import" type="button" disabled>从已完成授权作业带入采样</button>
+              <span id="analysis-transport-import-status" class="ca-muted" role="status">选择已完成的授权作业后，可直接带入 plan/job 与 native 采样列。</span>
+            </div>
+            <p class="ca-physical-note">自动化范围：只读取授权计划的 metadata 列映射并填入来源 ID/候选分量；不会自动计算梯度或传递系数。提交前请确认模式、分量、窗口和单位。</p>
             <label>驱动条件<select name="transport_driving">
               <option value="unspecified">未指定</option>
               <option value="gradient_imposed">施加梯度</option>
@@ -1195,6 +1289,64 @@ function renderMdAnalysis(run, target) {
           <p id="md-job-source" class="ca-muted">上传结构，或从 VASP 结果选择结构。</p>
           <label>独立结构<input id="md-job-file" type="file"></label>
           <label>作业配置 JSON<textarea id="md-job-config" rows="9" required></textarea></label>
+          <fieldset id="md-transport-driving" class="ca-driving-workbench">
+            <legend>外部驱动工作台</legend>
+            <p class="ca-muted">三类边界驱动可独立勾选；提交时写入顶层 <code>transport_driving</code>，并保留现有 <code>transport_sampling</code> 作为独立的采样配置。未启用时不改写作业 JSON。</p>
+            <label class="ca-a5-check"><input id="md-driving-enabled" type="checkbox">启用外部驱动</label>
+            <div id="md-driving-fields" hidden>
+              <div class="ca-grid">
+                <label>驱动法向轴<select id="md-driving-axis">
+                  <option value="x">x</option><option value="y">y</option><option value="z">z</option>
+                </select></label>
+              </div>
+              <div class="ca-driving-grid">
+                <fieldset class="ca-driving-card">
+                  <legend>温度边界 · 测得温度梯度</legend>
+                  <label class="ca-a5-check"><input id="md-driving-temperature-enabled" type="checkbox">启用温度 slab 驱动</label>
+                  <fieldset id="md-driving-temperature-fields" class="ca-driving-fields" hidden disabled>
+                    <div class="ca-grid">
+                      <label>模式<select id="md-driving-temperature-mode"><option value="thermostat_slabs">thermostat_slabs</option></select></label>
+                      <label>热区目标温度（K）<input id="md-driving-temperature-hot" type="number" step="any"></label>
+                      <label>冷区目标温度（K）<input id="md-driving-temperature-cold" type="number" step="any"></label>
+                      <label>热区 lo（沿法向 Å）<input id="md-driving-temperature-hot-lo" type="number" step="any"></label>
+                      <label>热区 hi（沿法向 Å）<input id="md-driving-temperature-hot-hi" type="number" step="any"></label>
+                      <label>冷区 lo（沿法向 Å）<input id="md-driving-temperature-cold-lo" type="number" step="any"></label>
+                      <label>冷区 hi（沿法向 Å）<input id="md-driving-temperature-cold-hi" type="number" step="any"></label>
+                      <label>阻尼时间（ps）<input id="md-driving-temperature-damping" type="number" min="0" step="any"></label>
+                      <label>基础随机种子<input id="md-driving-temperature-seed" type="number" min="1" max="900000000" step="1"></label>
+                      <label>动态分组更新间隔（契约固定为 1）<input id="md-driving-temperature-groups" type="number" min="1" step="1" value="1" readonly></label>
+                    </div>
+                    <label class="ca-a5-check"><input id="md-driving-temperature-zero-force" type="checkbox" checked disabled>消除随机力净和（zero_random_force，固定 true）</label>
+                    <p class="ca-muted">后端按 seed + 1 派生冷区种子，组成员每步按实时位置更新；基础积分器必须是 NVE。目标温差不是测得梯度。</p>
+                  </fieldset>
+                </fieldset>
+                <fieldset class="ca-driving-card">
+                  <legend>浓度边界 · 测得浓度梯度</legend>
+                  <label class="ca-a5-check"><input id="md-driving-concentration-enabled" type="checkbox">启用 atom/swap reservoir</label>
+                  <fieldset id="md-driving-concentration-fields" class="ca-driving-fields" hidden disabled>
+                    <label>浓度物种（逗号分隔，须匹配结构元素）<input id="md-driving-concentration-species" placeholder="元素符号，例如 H,O"></label>
+                    <label>交换温度（K，可留空沿用初始温度）<input id="md-driving-concentration-temperature" type="number" step="any"></label>
+                    <label>两个 reservoir 区域 JSON（必须恰好两个）<textarea id="md-driving-concentration-regions" rows="5" placeholder='[{"name":"low","lo":0,"hi":1,"every":100,"attempts":10,"seed":101,"mu_eV":{"<species_1>":0,"<species_2>":0}},{"name":"high","lo":9,"hi":10,"every":100,"attempts":10,"seed":102,"mu_eV":{"<species_1>":0,"<species_2>":0}}]'></textarea></label>
+                    <label>动能处理<select id="md-driving-concentration-ke"><option value="yes">yes</option><option value="no">no</option></select></label>
+                    <p class="ca-muted">semi_grand 固定为 true；化学势差控制响应，不保证目标浓度或固定浓度梯度。区域按当前位置实时选原子，且 atom/swap 不更新每原子电荷或质量。</p>
+                  </fieldset>
+                </fieldset>
+                <fieldset class="ca-driving-card">
+                  <legend>剪切边界 · 测得速度梯度</legend>
+                  <label class="ca-a5-check"><input id="md-driving-shear-enabled" type="checkbox">启用 moving walls</label>
+                  <fieldset id="md-driving-shear-fields" class="ca-driving-fields" hidden disabled>
+                    <div class="ca-grid">
+                      <label>模式<select id="md-driving-shear-mode"><option value="moving_walls">moving_walls</option><option value="sllod" disabled>sllod（当前不支持）</option></select></label>
+                      <label>切向轴<select id="md-driving-shear-tangential"><option value="x">x</option><option value="y">y</option><option value="z">z</option></select></label>
+                    </div>
+                    <label>两个 wall 区域 JSON（必须恰好两个）<textarea id="md-driving-shear-regions" rows="5" placeholder='[{"name":"wall_low","lo":0,"hi":1,"velocity_A_per_ps":0},{"name":"wall_high","lo":9,"hi":10,"velocity_A_per_ps":0}]'></textarea></label>
+                    <p class="ca-muted">法向边界必须非周期且晶胞正交；壁原子由 fix move 驱动并排除出 NVE。请求墙速不等于已维持的速度梯度，须由原生速度与动量通量采样拟合。</p>
+                  </fieldset>
+                </fieldset>
+              </div>
+              <p class="ca-physical-note">输入：边界控制参数。输出：原生场/速度/通量剖面的测得梯度，以及热库交换、atom/swap 统计和墙面动量回执。初始场、目标场和控制参数不会被界面标作已维持梯度。</p>
+            </div>
+          </fieldset>
           <label>EAM 势函数文件<input id="md-job-potential" type="file"></label>
           <p class="ca-muted">支持显式 LJ 参数和 EAM/alloy 文件。输入步长、温度、系综与三轴边界，可下载作业包，或在已启用调度的项目中发起人工确认。</p>
           <a href="/guide/md-job" target="_blank" rel="noopener">配置字段与运行命令</a>
@@ -1457,6 +1609,43 @@ function renderMdAnalysis(run, target) {
     const checkpoints = find("#md-slurm-checkpoint");
     const steps = find("#md-slurm-steps");
     const restartEvery = find("#md-slurm-restart-every");
+    const transportImport = find("#analysis-transport-import");
+    const transportImportStatus = find("#analysis-transport-import-status");
+    const drivingControls = {
+      enabled: find("#md-driving-enabled"),
+      fields: find("#md-driving-fields"),
+      axis: find("#md-driving-axis"),
+      temperature: {
+        enabled: find("#md-driving-temperature-enabled"),
+        fields: find("#md-driving-temperature-fields"),
+        mode: find("#md-driving-temperature-mode"),
+        hot: find("#md-driving-temperature-hot"),
+        cold: find("#md-driving-temperature-cold"),
+        hotLo: find("#md-driving-temperature-hot-lo"),
+        hotHi: find("#md-driving-temperature-hot-hi"),
+        coldLo: find("#md-driving-temperature-cold-lo"),
+        coldHi: find("#md-driving-temperature-cold-hi"),
+        damping: find("#md-driving-temperature-damping"),
+        seed: find("#md-driving-temperature-seed"),
+        groups: find("#md-driving-temperature-groups"),
+        zeroRandomForce: find("#md-driving-temperature-zero-force"),
+      },
+      concentration: {
+        enabled: find("#md-driving-concentration-enabled"),
+        fields: find("#md-driving-concentration-fields"),
+        species: find("#md-driving-concentration-species"),
+        temperature: find("#md-driving-concentration-temperature"),
+        regions: find("#md-driving-concentration-regions"),
+        ke: find("#md-driving-concentration-ke"),
+      },
+      shear: {
+        enabled: find("#md-driving-shear-enabled"),
+        fields: find("#md-driving-shear-fields"),
+        mode: find("#md-driving-shear-mode"),
+        tangential: find("#md-driving-shear-tangential"),
+        regions: find("#md-driving-shear-regions"),
+      },
+    };
     const resources = Object.fromEntries(["cpus", "gpus", "minutes"]
       .map(key => [key, find("#md-slurm-" + key)]));
     const json = { "Content-Type": "application/json" };
@@ -1528,6 +1717,178 @@ function renderMdAnalysis(run, target) {
       return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
     }
 
+    function drivingNumber(field, label) {
+      if (!Number.isFinite(field.valueAsNumber)) throw new Error("请填写" + label + "。");
+      return field.valueAsNumber;
+    }
+
+    function drivingInteger(field, label) {
+      const value = field.valueAsNumber;
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error(label + " 必须是正整数。");
+      return value;
+    }
+
+
+    function orderedDrivingRegion(region, label) {
+      if (!region || typeof region !== "object" || Array.isArray(region)
+          || !Number.isFinite(region.lo) || !Number.isFinite(region.hi) || region.hi <= region.lo) {
+        throw new Error(label + " 必须有有限数值 lo/hi 且 hi 大于 lo。");
+      }
+    }
+
+    function exactDrivingRegions(field, label, keys) {
+      let value;
+      try {
+        value = JSON.parse(field.value);
+      } catch {
+        throw new Error(label + " 必须是合法 JSON。");
+      }
+      if (!Array.isArray(value) || value.length !== 2) {
+        throw new Error(label + " 必须恰好包含两个区域。");
+      }
+      const expected = [...keys].sort().join("|");
+      value.forEach((region, index) => {
+        if (!region || typeof region !== "object" || Array.isArray(region)
+            || Object.keys(region).sort().join("|") !== expected) {
+          throw new Error(label + " 第 " + (index + 1) + " 个区域字段不匹配契约。");
+        }
+        orderedDrivingRegion(region, label + " 第 " + (index + 1) + " 个区域");
+        if (typeof region.name !== "string" || !region.name.trim()) {
+          throw new Error(label + " 第 " + (index + 1) + " 个区域需要名称。");
+        }
+      });
+      if (value[0].lo < value[1].hi && value[1].lo < value[0].hi) {
+        throw new Error(label + " 两个区域不能重叠。");
+      }
+      return value;
+    }
+
+    function readDrivingConfig() {
+      if (!drivingControls.enabled.checked) return null;
+      const config = { enabled: true, axis: drivingControls.axis.value };
+      let active = 0;
+      if (drivingControls.temperature.enabled.checked) {
+        active++;
+        const hot = drivingNumber(drivingControls.temperature.hot, "热区目标温度");
+        const cold = drivingNumber(drivingControls.temperature.cold, "冷区目标温度");
+        const hotRegion = {
+          lo: drivingNumber(drivingControls.temperature.hotLo, "热区 lo"),
+          hi: drivingNumber(drivingControls.temperature.hotHi, "热区 hi"),
+        };
+        const coldRegion = {
+          lo: drivingNumber(drivingControls.temperature.coldLo, "冷区 lo"),
+          hi: drivingNumber(drivingControls.temperature.coldHi, "冷区 hi"),
+        };
+        orderedDrivingRegion(hotRegion, "热区");
+        orderedDrivingRegion(coldRegion, "冷区");
+        if (hot <= cold) throw new Error("热区目标温度必须高于冷区目标温度。");
+        if (hotRegion.lo < coldRegion.hi && coldRegion.lo < hotRegion.hi) {
+          throw new Error("温度热区与冷区不能重叠。");
+        }
+        config.temperature = {
+          mode: drivingControls.temperature.mode.value,
+          hot_K: hot,
+          cold_K: cold,
+          hot_region: hotRegion,
+          cold_region: coldRegion,
+          damping_ps: drivingNumber(drivingControls.temperature.damping, "温度阻尼时间"),
+          seed: drivingInteger(drivingControls.temperature.seed, "温度随机种子"),
+          group_update_every: drivingInteger(drivingControls.temperature.groups, "动态分组更新间隔"),
+          zero_random_force: drivingControls.temperature.zeroRandomForce.checked,
+        };
+      }
+      if (drivingControls.concentration.enabled.checked) {
+        active++;
+        const species = drivingControls.concentration.species.value.split(",")
+          .map(value => value.trim()).filter(Boolean);
+        if (species.length < 2 || new Set(species).size !== species.length
+            || species.some(value => !/^[A-Z][a-z]?$/.test(value))) {
+          throw new Error("浓度物种必须是至少两个不重复的元素符号。");
+        }
+        const regions = exactDrivingRegions(drivingControls.concentration.regions,
+          "浓度 reservoir 区域", ["name", "lo", "hi", "every", "attempts", "seed", "mu_eV"]);
+        regions.forEach((region, index) => {
+          for (const key of ["every", "attempts", "seed"]) {
+            if (!Number.isSafeInteger(region[key]) || region[key] < 1) {
+              throw new Error("浓度 reservoir " + (index + 1) + " 的 " + key + " 必须是正整数。");
+            }
+          }
+          if (!region.mu_eV || typeof region.mu_eV !== "object" || Array.isArray(region.mu_eV)
+              || Object.keys(region.mu_eV).sort().join("|") !== [...species].sort().join("|")
+              || Object.values(region.mu_eV).some(value => !Number.isFinite(value))) {
+            throw new Error("浓度 reservoir " + (index + 1) + " 的 mu_eV 必须逐一对应物种。");
+          }
+        });
+        const concentration = {
+          mode: "atom_swap_reservoirs",
+          species,
+          regions,
+          semi_grand: true,
+          ke: drivingControls.concentration.ke.value,
+        };
+        if (drivingControls.concentration.temperature.value.trim()) {
+          concentration.temperature_K = drivingNumber(drivingControls.concentration.temperature, "交换温度");
+        }
+        config.concentration = concentration;
+      }
+      if (drivingControls.shear.enabled.checked) {
+        active++;
+        if (drivingControls.shear.mode.value === "sllod") {
+          throw new Error("SLLOD 当前不支持：请选择 moving_walls。");
+        }
+        if (drivingControls.shear.tangential.value === config.axis) {
+          throw new Error("剪切切向轴必须不同于驱动法向轴。");
+        }
+        config.shear = {
+          mode: "moving_walls",
+          tangential_axis: drivingControls.shear.tangential.value,
+          wall_regions: exactDrivingRegions(drivingControls.shear.regions,
+            "shear wall 区域", ["name", "lo", "hi", "velocity_A_per_ps"]),
+        };
+      }
+      if (!active) throw new Error("启用外部驱动后，至少勾选一种驱动类型。");
+      return config;
+    }
+
+    function readJobConfig() {
+      let config;
+      try {
+        config = JSON.parse(configInput.value);
+      } catch {
+        throw new Error("请填写合法的作业配置 JSON。");
+      }
+      if (!config || Array.isArray(config) || typeof config !== "object") {
+        throw new Error("作业配置必须是 JSON 对象。");
+      }
+      const requestedDriving = readDrivingConfig();
+      if (requestedDriving) {
+        config = { ...config, transport_driving: requestedDriving };
+        configInput.value = JSON.stringify(config, null, 2);
+      }
+      return config;
+    }
+
+    for (const control of [
+      drivingControls.enabled,
+      drivingControls.temperature.enabled,
+      drivingControls.concentration.enabled,
+      drivingControls.shear.enabled,
+    ]) control.addEventListener("change", syncDrivingFields);
+    function syncDrivingFields() {
+      const enabled = drivingControls.enabled.checked;
+      drivingControls.fields.hidden = !enabled;
+      drivingControls.axis.disabled = !enabled;
+      for (const group of [
+        drivingControls.temperature, drivingControls.concentration, drivingControls.shear,
+      ]) {
+        const active = enabled && group.enabled.checked;
+        group.fields.hidden = !active;
+        group.fields.disabled = !active;
+      }
+    }
+    syncDrivingFields();
+
+
     find("#analysis-results").addEventListener("click", event => {
       const button = event.target.closest("button[data-md-run]");
       if (!button || form.hidden) return;
@@ -1556,7 +1917,8 @@ function renderMdAnalysis(run, target) {
       syncCreate();
       setStatus(status, "正在生成 LAMMPS 作业包…");
       try {
-        await exportZip("/api/md-job", formBody(configInput.value), signal, "lammps-md-job.zip");
+        const config = readJobConfig();
+        await exportZip("/api/md-job", formBody(JSON.stringify(config)), signal, "lammps-md-job.zip");
         setStatus(status, "已生成 LAMMPS 作业包。");
       } catch (error) {
         if (!signal?.aborted) setStatus(status, error.message, true);
@@ -1576,15 +1938,7 @@ function renderMdAnalysis(run, target) {
       setStatus(status, "正在创建待确认计划…");
       try {
         if (!attempt) {
-          let config;
-          try {
-            config = JSON.parse(configInput.value);
-          } catch {
-            throw new Error("请填写合法的作业配置 JSON。");
-          }
-          if (!config || Array.isArray(config) || typeof config !== "object") {
-            throw new Error("作业配置必须是 JSON 对象。");
-          }
+          const config = readJobConfig();
           if (restartEvery.value) config.restart_every = restartEvery.valueAsNumber;
           if (!Number.isSafeInteger(config.restart_every) || config.restart_every < 1) {
             throw new Error("请填写正整数检查点间隔（restart_every）。");
@@ -1604,7 +1958,129 @@ function renderMdAnalysis(run, target) {
       }
     });
 
+    function transportColumnPair(field, flux) {
+      if (typeof field === "string" && typeof flux === "string") return { field, flux };
+      if (!field || typeof field !== "object" || Array.isArray(field)
+          || !flux || typeof flux !== "object" || Array.isArray(flux)) return null;
+      for (const key of Object.keys(field).sort()) {
+        if (typeof field[key] === "string" && typeof flux[key] === "string") {
+          return { field: field[key], flux: flux[key], component: key };
+        }
+      }
+      return null;
+    }
+
+    function transportUnit(metadata, key, fallback = "") {
+      return metadata?.units?.[key]?.lammps ?? metadata?.units?.[key]?.si ?? fallback;
+    }
+
+    function applyTransportMetadata(metadata, planId, jobId) {
+      const form = find("#analysis-form");
+      const elements = form?.elements;
+      if (!elements) throw new Error("找不到输运分析工作台。");
+      elements.transport_source_plan_id.value = planId;
+      elements.transport_source_job_id.value = jobId;
+      const profile = metadata?.columns?.profile ?? {};
+      const position = typeof profile.position === "string" ? profile.position : "";
+      const time = typeof profile.time === "string" ? profile.time : "";
+      elements.transport_position_column.value = position;
+      elements.transport_position_unit.value = transportUnit(metadata, "position", "angstrom");
+      elements.transport_time_column.value = time;
+      elements.transport_time_unit.value = transportUnit(metadata, "time", "step");
+      const conductivity = transportColumnPair(profile.temperature, profile.heat_flux);
+      const diffusivity = transportColumnPair(profile.concentration, profile.mass_flux);
+      const velocityColumns = metadata?.columns?.velocity ?? profile.velocity;
+      let viscosity = null;
+      if (velocityColumns && profile.momentum_flux
+          && typeof velocityColumns === "object" && !Array.isArray(velocityColumns)
+          && typeof profile.momentum_flux === "object" && !Array.isArray(profile.momentum_flux)) {
+        const normal = metadata.axis;
+        const components = Object.keys(profile.momentum_flux).sort()
+          .filter(component => /^[xyz]{2}$/.test(component)
+            && component[0] !== component[1] && component.includes(normal));
+        const component = components.find(value => {
+          const tangential = [...value].find(axis => axis !== normal);
+          return tangential && typeof velocityColumns[tangential] === "string"
+            && typeof profile.momentum_flux[value] === "string";
+        });
+        if (component) {
+          const tangential = [...component].find(axis => axis !== normal);
+          viscosity = {
+            field: velocityColumns[tangential], flux: profile.momentum_flux[component], component,
+          };
+        }
+      }
+      const candidates = [
+        conductivity && { mode: "conductivity", pair: conductivity, fieldKey: "temperature", fluxKey: "heat_flux" },
+        diffusivity && { mode: "diffusivity", pair: diffusivity, fieldKey: "concentration", fluxKey: "mass_flux" },
+        viscosity && { mode: "viscosity", pair: viscosity, fieldKey: "velocity", fluxKey: "momentum_flux" },
+      ].filter(Boolean);
+      const candidate = candidates.find(value => value.mode === elements.transport_mode.value) ?? candidates[0];
+      if (candidate) {
+        elements.transport_mode.value = candidate.mode;
+        elements.transport_mode.dispatchEvent(new Event("change", { bubbles: true }));
+        elements.transport_field_column.value = candidate.pair.field;
+        elements.transport_field_unit.value = transportUnit(metadata, candidate.fieldKey);
+        elements.transport_flux_column.value = candidate.pair.flux;
+        elements.transport_flux_unit.value = transportUnit(metadata, candidate.fluxKey);
+      }
+      const available = [
+        profile.temperature && "temperature/temp",
+        profile.concentration && "concentration",
+        profile.heat_flux && "heat_flux",
+        profile.mass_flux && "mass_flux",
+        velocityColumns && "velocity",
+        profile.momentum_flux && "momentum_flux",
+        metadata?.columns?.global_flux && "global_flux",
+      ].filter(Boolean);
+      const component = candidate?.pair?.component ? "候选分量 " + candidate.pair.component + "，" : "";
+      setStatus(transportImportStatus,
+        "已自动带入 plan/job、位置/时间列" + (candidate ? "与 " + component + candidate.mode + " 列。" : "；可用 native 列：" + available.join("、") + "。")
+        + "提交时保持主文件/sidecar 为空，服务端将从授权计划读取原始工件；尚未拟合梯度或计算传递系数，请确认模式、分量、窗口和单位后再提交。");
+    }
+
+    async function importTransport() {
+      if (transportImport?.disabled) return;
+      const record = records.get(jobs.value);
+      const planId = current?.plan_id ?? record?.id ?? jobs.value;
+      const jobId = current?.job_id ?? record?.job_id;
+      if (!planId || !jobId) {
+        setStatus(transportImportStatus, "请先在上方选择已授权的 MD 作业。", true);
+        return;
+      }
+      if (!current?.terminal || current.runner_state !== "completed") {
+        setStatus(transportImportStatus, "作业尚未完成，暂不带入 native 采样。", true);
+        return;
+      }
+      transportImport.disabled = true;
+      setStatus(transportImportStatus, "正在读取授权计划 metadata…");
+      try {
+        const metadataArtifact = (current.artifacts ?? []).find(artifact => /metadata\.json$/i.test(artifact.name ?? ""));
+        const metadata = metadataArtifact ? await request(metadataArtifact.url) : null;
+        const form = find("#analysis-form");
+        form.elements.transport_source_plan_id.value = planId;
+        form.elements.transport_source_job_id.value = jobId;
+        if (metadata) {
+          applyTransportMetadata(metadata, planId, jobId);
+        } else {
+          setStatus(transportImportStatus,
+            "已带入 plan/job，但授权作业未暴露 metadata 工件；采样列仍需人工填写，未进行任何自动拟合。", true);
+        }
+      } catch (error) {
+        setStatus(transportImportStatus, "授权采样带入失败：" + error.message, true);
+      } finally {
+        renderJob();
+      }
+    }
+
+    transportImport?.addEventListener("click", () => void importTransport());
+
     function renderJob() {
+      if (transportImport) {
+        const ready = current?.terminal === true && current.runner_state === "completed";
+        transportImport.disabled = acting || !ready;
+        transportImport.title = ready ? "读取已授权 metadata 并带入候选列" : "等待作业完成后可带入 native 采样";
+      }
       find("#md-slurm-detail").hidden = !current;
       jobs.disabled = acting || !records.size;
       refresh.disabled = acting;

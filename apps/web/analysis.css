@@ -151,3 +151,16 @@
 #studio .ca-transport-notes { padding-inline-start: 20px; }
 #studio #analysis-transport input[type="file"] { min-width: 0; }
 #studio #analysis-transport .ca-muted { max-width: 72rem; }
+#studio .ca-driving-workbench { margin-top: 14px; padding: 10px 12px 12px; border-color: var(--wb-accent); }
+#studio .ca-driving-workbench > legend { color: var(--wb-accent); font-weight: 600; }
+#studio .ca-driving-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+#studio .ca-driving-card { min-width: 0; background: var(--wb-panel); }
+#studio .ca-driving-card > legend { font-size: 14px; font-weight: 600; }
+#studio .ca-driving-fields { margin-top: 8px; padding: 0 10px 10px; }
+#studio .ca-driving-fields > label { margin-top: 10px; }
+#studio .ca-driving-fields textarea { min-height: 7rem; font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+#studio .ca-physical-note { padding: 9px 11px; border-inline-start: 2px solid var(--wb-accent); color: var(--wb-muted); background: var(--wb-panel); }
+#studio .ca-transport-driving-result { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--wb-line); border-radius: 7px; background: var(--wb-panel); }
+#studio .ca-transport-driving-result :is(h5, h6) { margin: 0 0 7px; }
+#studio .ca-transport-driving-result h6:not(:first-child) { margin-top: 14px; }
+@media (max-width: 900px) { #studio .ca-driving-grid { grid-template-columns: minmax(0, 1fr); } }
