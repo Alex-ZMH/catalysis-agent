@@ -379,12 +379,12 @@ function renderMdAnalysis(run, target) {
       const selectedGradient = { conductivity: "temperature", diffusivity: "concentration", viscosity: "velocity" }[result.mode] === key;
       const selectedFlux = result.mode === "viscosity" && key === "momentum_flux";
       const computed = selectedGradient ? result.gradient : selectedFlux ? result.mean_flux : null;
-      const value = item.value == null ? computed : item.value;
+      const observedValue = item.value == null ? computed : item.value;
       const units = item.value == null && computed != null
         ? (selectedGradient ? result.units?.gradient : result.units?.flux) : item.unit;
-      const measuredValue = value == null ? "未报告"
-        : Number.isFinite(value) ? [formatNumber(value), units].filter(Boolean).join(" ")
-          : String(value);
+      const measuredValue = observedValue == null ? "未报告"
+        : Number.isFinite(observedValue) ? [formatNumber(observedValue), units].filter(Boolean).join(" ")
+          : String(observedValue);
       const source = [item.source_file, item.source_column].filter(Boolean).join(" · ");
       return [gradientLabels[key] ?? key, [measuredValue, source].filter(Boolean).join(" · ")];
     });
