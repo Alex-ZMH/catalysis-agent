@@ -641,6 +641,7 @@ def build_job(filename, source_bytes, config, *, potential=None, provenance=None
             tilt_line = b"0 0 0 xy xz yz\n"
             if tilt_line not in structure_data:
                 raise ValueError("Orthogonal transport structure is missing its zero-tilt data line")
+            structure_data = structure_data.replace(tilt_line, b"", 1)
     nonperiodic = [axis for axis, mode in enumerate(config["boundary"]) if mode != "p"]
     if nonperiodic:
         atoms = structure_data.split(b"\nAtoms # atomic\n\n", 1)[1]
