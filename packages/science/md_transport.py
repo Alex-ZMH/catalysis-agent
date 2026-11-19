@@ -95,9 +95,9 @@ def _law(mode, incoming, stress_convention):
         units.update(field="m/s", flux="Pa", gradient="1/s", coefficient="Pa*s")
         factors.update(field=_VELOCITY[field], flux=_STRESS[flux])
         if stress_convention == "momentum_flux":
-            sign, formula = -1, "eta = -mean(P_xy) / (dv_x/dy)"
+            sign, formula = -1, "eta = -mean(P) / velocity_gradient"
         else:
-            sign, formula = 1, "eta = +mean(tau_xy) / (dv_x/dy)"
+            sign, formula = 1, "eta = +mean(tau) / velocity_gradient"
     return units, factors, basis, sign, formula
 
 
