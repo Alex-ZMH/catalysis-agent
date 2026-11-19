@@ -1219,6 +1219,39 @@ function renderMdAnalysis(run, target) {
         <p id="analysis-history-status" role="status"></p>
         <ul id="analysis-history-list"></ul>
       </section>
+      <section id="agent-kinetics-workbench" class="ca-agent-kinetics-workbench" aria-labelledby="agent-kinetics-title">
+        <div class="ca-heading">
+          <div>
+            <p class="ca-kicker">第 2 项 · 项目内代理拟合</p>
+            <h2 id="agent-kinetics-title">自然语言动力学拟合</h2>
+          </div>
+          <button id="agent-kinetics-refresh" type="button">刷新实验表</button>
+        </div>
+        <p class="ca-muted ca-agent-kinetics-lede">
+          选择当前项目已有研究运行的实验表，直接说明拟合任务。服务端真实识别动力学模型并调用项目拟合；前端不猜测模型，也不上传或复制文件。
+        </p>
+        <form id="agent-kinetics-form">
+          <div class="ca-grid ca-agent-kinetics-source-grid">
+            <label>当前项目实验表<select id="agent-kinetics-source-run" required><option value="">选择已有实验表</option></select></label>
+            <label>原始表文件<select id="agent-kinetics-source-artifact" required disabled><option value="">先选择实验表</option></select></label>
+            <label>工作表（可选）<input id="agent-kinetics-sheet" placeholder="留空由服务端读取默认工作表"></label>
+          </div>
+          <label>自然语言指令<textarea id="agent-kinetics-instruction" rows="3" required>用这份实验表做动力学拟合</textarea></label>
+          <div id="agent-kinetics-source-preview" class="ca-agent-kinetics-preview" aria-live="polite">
+            <p class="ca-muted">选择实验表后显示项目、文件名、工作表和可用原始文件。</p>
+          </div>
+          <p class="ca-muted ca-agent-kinetics-note">模型识别和拟合由当前项目服务端完成；提交前可编辑指令。结果会从返回的 run_id 读取现有运行详情，显示拟合模型参数及单位。</p>
+          <div class="ca-md-actions">
+            <button id="agent-kinetics-submit" class="ca-primary" type="submit" disabled>识别模型并拟合</button>
+            <span id="agent-kinetics-status" role="status"></span>
+          </div>
+        </form>
+        <section id="agent-kinetics-receipt" class="ca-agent-kinetics-receipt" hidden aria-labelledby="agent-kinetics-receipt-title">
+          <h3 id="agent-kinetics-receipt-title">拟合任务回执</h3>
+          <div id="agent-kinetics-receipt-summary"></div>
+          <div id="agent-kinetics-run-details" class="ca-agent-kinetics-run-details" hidden></div>
+        </section>
+      </section>
       <section id="engineering-workbench" class="ca-engineering-workbench" aria-labelledby="engineering-title">
         <div class="ca-heading">
           <h2 id="engineering-title">工程工况工作台</h2>
@@ -2960,6 +2993,270 @@ function renderMdAnalysis(run, target) {
   }
 
 
+  function mountAgentKinetics(find, panel, request, signal, openRun) {
+    const root = find("#agent-kinetics-workbench");
+    if (!root) return;
+    const form = find("#agent-kinetics-form");
+    const sourceRun = find("#agent-kinetics-source-run");
+    const sourceArtifact = find("#agent-kinetics-source-artifact");
+    const sheet = find("#agent-kinetics-sheet");
+    const instruction = find("#agent-kinetics-instruction");
+    const refresh = find("#agent-kinetics-refresh");
+    const submit = find("#agent-kinetics-submit");
+    const status = find("#agent-kinetics-status");
+    const preview = find("#agent-kinetics-source-preview");
+    const receipt = find("#agent-kinetics-receipt");
+    const receiptSummary = find("#agent-kinetics-receipt-summary");
+    const runDetails = find("#agent-kinetics-run-details");
+    const jsonHeaders = { "Content-Type": "application/json" };
+    const state = { runs: [], detail: null, artifactCount: 0, busy: false, version: 0 };
+
+    const runId = run => run?.id ?? run?.run_id;
+    const sourceArtifacts = run => (run?.artifacts ?? [])
+      .filter(artifact => artifact.role === "source");
+    const display = value => value == null || value === "" ? "未报告"
+      : typeof value === "object" ? JSON.stringify(value) : String(value);
+    const runLabel = run => [
+      run?.filename ?? "未命名实验表",
+      kindLabel[run?.kind] ?? run?.kind,
+      originLabel[run?.origin] ?? run?.origin,
+      run?.created_at,
+      runId(run),
+    ].filter(Boolean).join(" · ");
+
+    function sync() {
+      const ready = Boolean(sourceRun.value && sourceArtifact.value && instruction.value.trim());
+      sourceRun.disabled = state.busy;
+      sourceArtifact.disabled = state.busy || !state.artifactCount || !sourceRun.value;
+      sheet.disabled = instruction.disabled = state.busy;
+      refresh.disabled = state.busy;
+      submit.disabled = state.busy || !ready;
+    }
+
+    function clearSourceSelection(message = "选择实验表后显示项目、文件名、工作表和可用原始文件。") {
+      state.detail = null;
+      state.artifactCount = 0;
+      sourceArtifact.replaceChildren(new Option("先选择实验表", ""));
+      sourceSheetReset();
+      preview.replaceChildren(element("p", message, "ca-muted"));
+    }
+
+    function sourceSheetReset() {
+      sheet.value = "";
+    }
+
+    function renderSourcePreview(run, artifacts) {
+      const source = run?.source ?? {};
+      const selectedSheet = run?.details?.sheet ?? source.sheet
+        ?? (sheet.value.trim() || run?.input?.sheet);
+      const rows = [
+        ["项目", source.project_id ?? run?.project_id ?? "当前项目"],
+        ["文件名", source.filename ?? run?.filename],
+        ["来源 run", source.run_id ?? runId(run)],
+        ["工作表", selectedSheet || "未指定（提交时由服务端读取默认工作表）"],
+        ["原始表工件", artifacts.map(artifact => artifact.name ?? artifact.id).join("、") || "未报告"],
+      ];
+      preview.replaceChildren(element("h3", "当前实验表来源"), metrics(rows));
+      if (artifacts.length) {
+        const list = element("ul", null, "ca-artifacts");
+        for (const artifact of artifacts) {
+          const row = element("li", artifact.name ?? artifact.id ?? "未命名原始工件");
+          row.append(element("small", artifact.id ?? "工件 ID 未报告"));
+          list.append(row);
+        }
+        preview.append(element("h4", "可选原始表文件"), list);
+      }
+    }
+
+    function populateSources(selected) {
+      sourceRun.replaceChildren(new Option("选择已有实验表", ""), ...state.runs.map(run =>
+        new Option(runLabel(run), runId(run) ?? "")));
+      sourceRun.value = state.runs.some(run => runId(run) === selected) ? selected : "";
+    }
+
+    async function loadSourceDetail(id) {
+      const version = ++state.version;
+      state.busy = true;
+      clearSourceSelection("正在读取所选实验表详情…");
+      sync();
+      if (!id) {
+        state.busy = false;
+        sync();
+        return;
+      }
+      setStatus(status, "正在读取所选实验表详情…");
+      try {
+        const run = await request("/api/runs/" + encodeURIComponent(id));
+        if (version !== state.version) return;
+        state.detail = run;
+        const artifacts = sourceArtifacts(run);
+        state.artifactCount = artifacts.length;
+        sourceArtifact.replaceChildren(
+          new Option(artifacts.length ? "选择原始表文件" : "未找到原始表文件", ""),
+          ...artifacts.map(artifact => new Option(
+            (artifact.name ?? artifact.id ?? "未命名原始工件") + " · " + (artifact.id ?? "ID 未报告"),
+            artifact.id ?? "",
+          )),
+        );
+        if (artifacts.length === 1) sourceArtifact.value = artifacts[0].id ?? "";
+        sheet.value = run?.details?.sheet ?? run?.source?.sheet ?? run?.input?.sheet ?? "";
+        renderSourcePreview(run, artifacts);
+        setStatus(status, artifacts.length
+          ? "已读取来源表；请选择原始文件并确认指令。"
+          : "所选运行没有 role=source 的原始表工件。", !artifacts.length);
+      } catch (error) {
+        if (version === state.version) {
+          clearSourceSelection("来源详情读取失败，请刷新后重试。");
+          setStatus(status, "读取实验表失败：" + error.message, true);
+        }
+      } finally {
+        if (version === state.version) {
+          state.busy = false;
+          sync();
+        }
+      }
+    }
+
+    async function refreshSources() {
+      const selected = sourceRun.value;
+      const version = ++state.version;
+      state.busy = true;
+      sync();
+      setStatus(status, "正在读取当前项目实验表…");
+      try {
+        const data = await request("/api/runs");
+        if (version !== state.version) return;
+        const runs = Array.isArray(data) ? data : (data?.runs ?? []);
+        state.runs = runs.filter(run => run?.kind === "kinetics");
+        populateSources(selected);
+        if (sourceRun.value) {
+          await loadSourceDetail(sourceRun.value);
+        } else {
+          clearSourceSelection();
+          setStatus(status, state.runs.length
+            ? "请选择当前项目实验表。"
+            : "当前项目暂无可用实验表或既有动力学记录。", !state.runs.length);
+        }
+      } catch (error) {
+        if (version === state.version) {
+          state.runs = [];
+          populateSources("");
+          clearSourceSelection("实验表读取失败，请刷新后重试。");
+          setStatus(status, "读取实验表失败：" + error.message, true);
+        }
+      } finally {
+        if (version === state.version) {
+          state.busy = false;
+          sync();
+        }
+      }
+    }
+
+    function renderReceipt(record, requestBody) {
+      const source = record.source ?? {};
+      const summary = metrics([
+        ["远端模型", record.model],
+        ["拟合模型", record.fitting_model],
+        ["指令", record.instruction ?? requestBody.instruction],
+        ["项目", source.project_id],
+        ["原表文件", source.filename],
+        ["工作表", source.sheet],
+        ["来源 run", source.run_id ?? requestBody.source_run_id],
+        ["来源工件", source.artifact_id ?? requestBody.source_artifact_id],
+        ["结果 run", record.run_id],
+      ]);
+      const sourceRunId = source.run_id ?? requestBody.source_run_id;
+      const sourceArtifactId = source.artifact_id ?? requestBody.source_artifact_id;
+      const sourceLink = element("div", null, "ca-agent-kinetics-source-link");
+      if (sourceRunId && sourceArtifactId) {
+        sourceLink.append(downloadLink(
+          "/api/runs/" + encodeURIComponent(sourceRunId) + "/artifacts/"
+            + encodeURIComponent(sourceArtifactId),
+          "下载项目原表"));
+      } else {
+        sourceLink.append(element("span", "项目原表链接未报告。", "ca-muted"));
+      }
+      const open = element("button", "在运行历史中打开详情");
+      open.type = "button";
+      open.addEventListener("click", () => openRun?.(record.run_id, "kinetics", open));
+      receiptSummary.replaceChildren(summary, sourceLink, open, details("服务回执 JSON", record));
+    }
+
+    async function renderReturnedRun(record) {
+      const returned = record?.result;
+      if (returned && typeof returned === "object"
+          && (returned.kind || returned.result || returned.id || returned.run_id)) {
+        const run = {
+          ...returned,
+          id: returned.id ?? returned.run_id ?? record.run_id,
+          kind: returned.kind ?? "kinetics",
+          filename: returned.filename ?? record.source?.filename,
+        };
+        renderRun(run, runDetails);
+        runDetails.hidden = false;
+        return true;
+      }
+      if (!record?.run_id) return false;
+      try {
+        const run = await request("/api/runs/" + encodeURIComponent(record.run_id));
+        renderRun(run, runDetails);
+        runDetails.hidden = false;
+        return true;
+      } catch {
+        runDetails.hidden = true;
+        return false;
+      }
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (submit.disabled) return;
+      const requestBody = {
+        instruction: instruction.value.trim(),
+        source_run_id: sourceRun.value,
+        source_artifact_id: sourceArtifact.value,
+      };
+      const sheetValue = sheet.value.trim();
+      if (sheetValue) requestBody.sheet = sheetValue;
+      state.busy = true;
+      receipt.hidden = true;
+      runDetails.hidden = true;
+      sync();
+      setStatus(status, "正在提交指令，由服务端识别模型并调用项目拟合…");
+      try {
+        const record = await request("/api/agent/kinetics", JSON.stringify(requestBody),
+          undefined, jsonHeaders);
+        if (!record || typeof record !== "object" || !record.run_id) {
+          throw new Error("服务未返回有效的动力学 run_id。");
+        }
+        renderReceipt(record, requestBody);
+        receipt.hidden = false;
+        const rendered = await renderReturnedRun(record);
+        setStatus(status, rendered
+          ? "已读取拟合运行详情；模型参数和单位来自该运行结果。"
+          : "任务已创建（" + record.run_id + "），详情暂不可读，可稍后从运行历史打开。");
+      } catch (error) {
+        receipt.hidden = false;
+        setStatus(status, "动力学拟合请求失败：" + error.message, true);
+      } finally {
+        state.busy = false;
+        sync();
+      }
+    });
+
+    sourceRun.addEventListener("change", () => void loadSourceDetail(sourceRun.value));
+    sourceArtifact.addEventListener("change", () => {
+      const run = state.detail;
+      if (run) renderSourcePreview(run, sourceArtifacts(run));
+      sync();
+    });
+    instruction.addEventListener("input", sync);
+    refresh.addEventListener("click", () => void refreshSources());
+    panel.addEventListener("toggle", () => { if (panel.open) void refreshSources(); }, { signal });
+    if (panel.open) void refreshSources();
+    sync();
+  }
+
   function mountWorkspace(panel, workbench, request, signal) {
     const find = selector => workbench.querySelector(selector);
     const handoff = find("#md-handoff-form");
@@ -3258,6 +3555,7 @@ function renderMdAnalysis(run, target) {
     }
 
     mountEngineering(find, panel, request, signal, workbench.dataset.role, openRun);
+    mountAgentKinetics(find, panel, request, signal, openRun);
     async function loadHistory() {
       const version = ++manifestVersion;
       const message = find("#analysis-history-status");
