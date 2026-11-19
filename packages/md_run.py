@@ -86,6 +86,29 @@ def _stage(directory, name, raw, config, potential, provenance, *, restarting=Fa
     return json.loads((directory / "md-config.json").read_text(encoding="utf-8"))
 
 
+def _write_transport_metadata(directory, bundle):
+    metadata = md_job.transport_metadata(bundle["config"], bundle["structure"])
+    if metadata is None:
+        return None
+    outputs = bundle["config"]["transport_sampling"]["outputs"]
+    name = outputs["metadata"]
+    (directory / name).write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "configured",
+        "profile": outputs["profile"],
+        "velocity": outputs["velocity"],
+        "global_flux": outputs["global_flux"],
+        "metadata": name,
+        "columns": metadata["columns"],
+        "units": metadata["units"],
+        "normalization": metadata["normalization"],
+        "geometry_limit": metadata["geometry_limit"],
+    }
+
+
 def _git_commit():
     try:
         return subprocess.check_output(
@@ -214,6 +237,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
         "engine": {"requested": str(engine), "path": None, "version": None, "version_argv": None,
                    "argv": None, "version_returncode": None, "returncode": None},
         "parameters": None, "units": None, "files": [], "thermo_rows": None, "error": None,
+        "transport": None,
     }
     handlers = {signum: signal.signal(signum, note_signal) for signum in _SIGNALS}
     try:
@@ -246,6 +270,7 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
                 record["inputs"]["potential"] = original_name if isinstance(original_name, str) else "potential.eam.alloy"
             record["parameters"] = bundle["config"]
             record["units"] = bundle["structure"]["units"]
+            record["transport"] = _write_transport_metadata(directory, bundle)
         if not caught:
             record["phase"] = "version"
             _write_record(directory, record)
@@ -275,6 +300,17 @@ def run_md(structure, config, engine, output_dir, *, potential=None, job_bundle=
                        if not (directory / name).is_file() or not (directory / name).stat().st_size]
             if missing:
                 raise RuntimeError("LAMMPS finished without required output: " + ", ".join(missing))
+            if record["transport"] is not None:
+                transport_missing = [
+                    record["transport"][key] for key in ("profile", "velocity", "global_flux", "metadata")
+                    if record["transport"].get(key)
+                    and (not (directory / record["transport"][key]).is_file()
+                         or not (directory / record["transport"][key]).stat().st_size)
+                ]
+                if transport_missing:
+                    raise RuntimeError("LAMMPS finished without transport output: "
+                                       + ", ".join(transport_missing))
+                record["transport"]["status"] = "sampled"
             record.update(status="completed", phase="finished")
     except (OSError, ValueError, RuntimeError, OverflowError, TypeError, KeyError, EOFError, BadZipFile) as error:
         record.update(status="failed", error=str(error))

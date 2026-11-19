@@ -1,6 +1,7 @@
 """Fit signed transport coefficients from paired spatial LAMMPS samples."""
 
 from fractions import Fraction
+import csv
 import io
 import math
 from statistics import fmean, linear_regression
@@ -30,6 +31,7 @@ _STRESS = {
 }
 _CONCENTRATION = {
     "kg/m^3": (1.0, "kg"), "g/cm^3": (1e3, "kg"),
+    "g/(mol*angstrom^3)": (_GRAM_PER_MOLE_PER_PARTICLE / _ANGSTROM**3, "kg"),
     "mol/m^3": (1.0, "mol"), "mol/L": (1e3, "mol"),
     "1/m^3": (1.0, "1"), "1/nm^3": (1e27, "1"), "1/angstrom^3": (1e30, "1"),
 }
@@ -375,3 +377,77 @@ def analyze_transport(filename: str, content: bytes, options: dict) -> dict:
                    "headers": headers, "columns": dict(columns), "units": dict(incoming),
                    "rows": [{"line": line, "values": values} for line, values in rows]},
     }
+
+
+def _join_velocity_source(profile, velocity, options):
+    """Join one native profile and one native velocity table by sample keys."""
+    columns = options.get("columns")
+    if not isinstance(columns, dict) or not isinstance(columns.get("field"), str):
+        raise ValueError("Paired transport sources require an explicit field column")
+    sheet = options.get("sheet")
+    _, _, profile_headers, profile_rows = _read_source(profile[0], profile[1], sheet)
+    _, _, velocity_headers, velocity_rows = _read_source(velocity[0], velocity[1], sheet)
+    field_name = columns["field"]
+    field_source = options.get("field_source", "auto")
+    if field_source not in ("auto", "profile", "velocity"):
+        raise ValueError("field_source must be auto, profile, or velocity")
+    if field_source != "velocity" and field_name in profile_headers:
+        return profile[0], profile[1]
+    if field_name not in velocity_headers:
+        raise ValueError(f"Column {field_name!r} for field is absent from profile and velocity sources")
+    if field_source == "profile":
+        raise ValueError(f"Column {field_name!r} for field is absent from the profile source")
+
+    key_names = []
+    for name in ("Timestep", "Chunk", columns.get("time"), columns.get("position"), "Ncount"):
+        if name and name in profile_headers and name in velocity_headers and name not in key_names:
+            key_names.append(name)
+    if not key_names:
+        raise ValueError("Profile and velocity sources have no shared sample keys")
+    profile_index = {name: index for index, name in enumerate(profile_headers)}
+    velocity_index = {name: index for index, name in enumerate(velocity_headers)}
+    field_index = velocity_index[field_name]
+    joined = {}
+    for _, row in velocity_rows:
+        key = tuple(row[velocity_index[name]] for name in key_names)
+        if key in joined:
+            raise ValueError("Velocity source has duplicate rows for a profile sample")
+        joined[key] = row[field_index]
+    rows = []
+    for _, row in profile_rows:
+        key = tuple(row[profile_index[name]] for name in key_names)
+        if key not in joined:
+            raise ValueError("Velocity source is missing a profile sample")
+        rows.append([*row, joined[key]])
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([*profile_headers, field_name])
+    writer.writerows(rows)
+    return "transport_profile_velocity.csv", output.getvalue().encode("utf-8")
+
+
+def analyze_transport_sources(sources: dict, options: dict) -> dict:
+    """Analyze an explicit role map of transport raw sources.
+
+    The role map is intentionally fixed: ``profile`` is the primary spatial
+    table, ``velocity`` is an optional paired table, and ``global_flux`` /
+    ``metadata`` / ``provenance`` are retained by the caller as provenance.
+    A velocity field is joined to the profile by native timestep/chunk/
+    position/count keys before the existing single-table analyzer runs.
+    """
+    if not isinstance(sources, dict):
+        raise ValueError("Transport sources must be a role map")
+    primary = sources.get("profile") or sources.get("global_flux")
+    if not isinstance(primary, tuple) or len(primary) < 2:
+        raise ValueError("Transport sources require a profile or global_flux table")
+    analysis_options = dict(options)
+    field_source = analysis_options.get("field_source", "auto")
+    analysis_options.pop("field_source", None)
+    velocity = sources.get("velocity")
+    if isinstance(velocity, tuple) and primary is sources.get("profile"):
+        field_name = analysis_options.get("columns", {}).get("field")
+        profile_headers = _read_source(primary[0], primary[1], analysis_options.get("sheet"))[2]
+        if field_source == "velocity" or field_name not in profile_headers:
+            joined_name, joined_content = _join_velocity_source(primary, velocity, options)
+            return analyze_transport(joined_name, joined_content, analysis_options)
+    return analyze_transport(primary[0], primary[1], analysis_options)
