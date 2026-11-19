@@ -358,7 +358,12 @@ function renderMdAnalysis(run, target) {
     const coefficient = element("div", null, "ca-transport-coefficient");
     coefficient.append(element("span", mode.coefficient, "ca-muted"),
       element("strong", quantity(result.coefficient, result.coefficient_unit)));
-    if (result.formula) coefficient.append(element("small", result.formula));
+    if (result.formula) {
+      const formula = result.mode === "viscosity"
+        ? (result.stress_convention === "momentum_flux" ? "η = −mean(P) / 速度梯度" : "η = +mean(τ) / 速度梯度")
+        : result.formula;
+      coefficient.append(element("small", formula));
+    }
     section.append(coefficient, metrics([
       ["场量梯度", quantity(result.gradient, result.gradient_unit ?? unit.gradient)],
       ["平均" + mode.flux, quantity(result.mean_flux, unit.flux)],
