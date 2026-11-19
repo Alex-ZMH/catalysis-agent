@@ -372,13 +372,19 @@ function renderMdAnalysis(run, target) {
       temperature: "温度梯度",
       concentration: "浓度梯度",
       velocity: "速度梯度",
-      momentum_flux: "动量通量梯度/分量",
+      momentum_flux: "平均动量通量分量",
     };
     const gradientRows = Object.entries(gradients).map(([key, value]) => {
       const item = value && typeof value === "object" && !Array.isArray(value) ? value : { value };
-      const measuredValue = item.value == null ? "未报告"
-        : Number.isFinite(item.value) ? [formatNumber(item.value), item.unit].filter(Boolean).join(" ")
-          : String(item.value);
+      const selectedGradient = { conductivity: "temperature", diffusivity: "concentration", viscosity: "velocity" }[result.mode] === key;
+      const selectedFlux = result.mode === "viscosity" && key === "momentum_flux";
+      const computed = selectedGradient ? result.gradient : selectedFlux ? result.mean_flux : null;
+      const value = item.value == null ? computed : item.value;
+      const units = item.value == null && computed != null
+        ? (selectedGradient ? result.units?.gradient : result.units?.flux) : item.unit;
+      const measuredValue = value == null ? "未报告"
+        : Number.isFinite(value) ? [formatNumber(value), units].filter(Boolean).join(" ")
+          : String(value);
       const source = [item.source_file, item.source_column].filter(Boolean).join(" · ");
       return [gradientLabels[key] ?? key, [measuredValue, source].filter(Boolean).join(" · ")];
     });
