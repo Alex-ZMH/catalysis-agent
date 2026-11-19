@@ -21,6 +21,103 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+_TRANSPORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:+-]{0,127}")
+
+
+def _transport_external_id(value, label):
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        raise ValueError(f"输运来源缺少有效的 {label}。")
+    value = str(value)
+    if not _TRANSPORT_ID.fullmatch(value):
+        raise ValueError(f"输运来源的 {label} 不是安全的 Slurm 标识。")
+    return value
+
+
+def _transport_metadata(files):
+    metadata_pair = next((pair for role, pair in files.items() if role in {"metadata", "provenance"}), None)
+    if metadata_pair is None:
+        raise ValueError("MD 输运导入需要 transport_metadata。")
+    try:
+        metadata = json.loads(metadata_pair[1].decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("输运元数据必须是合法的 JSON 对象。") from error
+    if not isinstance(metadata, dict):
+        raise ValueError("输运元数据必须是 JSON 对象。")
+    containers = [metadata]
+    for key in ("provenance", "execution", "source", "transport"):
+        if isinstance(metadata.get(key), dict):
+            containers.append(metadata[key])
+
+    def identity(keys, label):
+        values = [_transport_external_id(container[key], label)
+                  for container in containers for key in keys if key in container]
+        if not values:
+            return None
+        if any(value != values[0] for value in values[1:]):
+            raise ValueError(f"输运来源的 {label} 在元数据中不一致。")
+        return values[0]
+
+    plan_id = identity(("plan_id", "source_plan_id"), "plan ID")
+    job_id = identity(("job_id", "scheduler_job_id", "slurm_job_id", "source_job_id"), "job ID")
+    if plan_id is None or job_id is None:
+        raise ValueError("输运元数据必须包含实际 plan_id 和 job_id。")
+    names = []
+    for container in containers:
+        values = container.get("source_files", container.get("source_paths"))
+        if isinstance(values, dict):
+            values = list(values.values())
+        if values is None:
+            continue
+        if not isinstance(values, list):
+            raise ValueError("输运元数据的原始文件清单无效。")
+        for item in values:
+            if isinstance(item, dict):
+                item = item.get("filename", item.get("name", item.get("path")))
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("输运元数据的原始文件清单无效。")
+            names.append(Path(item.replace("\\", "/")).name)
+    uploaded = {pair[0] for pair in files.values()}
+    missing = sorted(set(names) - uploaded)
+    if missing:
+        raise ValueError(f"输运元数据引用的原始文件未随请求上传：{missing[0]}")
+    return metadata, {"plan_id": plan_id, "job_id": job_id,
+                      "source_files": sorted(uploaded | set(names)), "verified": False}
+
+
+def read_transport_metadata(files):
+    """Parse transport provenance without assigning trust to its claims."""
+    return _transport_metadata(files)
+
+
+def build_transport_inputs(filename, content, options, transport_files=None):
+    """Normalize the primary transport file and optional raw sidecars."""
+    inputs = {}
+    primary_role = options.get("transport_primary_role", "profile")
+    primary_role = "global_flux" if primary_role == "global" else primary_role
+    if primary_role not in {"profile", "global_flux"}:
+        raise ValueError("输运主文件必须是 profile 或 global_flux。")
+    inputs[primary_role] = (filename, content)
+    for key in sorted(transport_files or {}):
+        pair = transport_files[key]
+        role = key.removeprefix("transport_")
+        role = "global_flux" if role == "global" else role
+        if role in inputs:
+            if inputs[role] != pair:
+                raise ValueError(f"输运 {role} 原始文件重复且内容不同。")
+            continue
+        inputs[role] = pair
+    return inputs
+
+
+def _transport_candidate(options, fields, keys, label):
+    values = []
+    for container in (options, fields or {}):
+        for key in keys:
+            if key in container and container[key] not in (None, ""):
+                values.append(_transport_external_id(container[key], label))
+    return values[0] if values else None
+
+
 class Workspace:
     def __init__(self, data_dir, project, operator, commit):
         for name in (project, operator):
@@ -31,6 +128,7 @@ class Workspace:
             raise ValueError("Select a data directory outside all Git worktrees")
         self.project, self.operator, self.commit = project, operator, commit
         base = data_dir / "projects" / project
+        self.base = base
         self.runs, self.blobs = base / "runs", base / "raw"
         self.runs.mkdir(parents=True, exist_ok=True)
         self.blobs.mkdir(parents=True, exist_ok=True)
@@ -61,13 +159,21 @@ class Workspace:
         finally:
             temp_name.unlink(missing_ok=True)
 
-    def analyze(self, kind, filename, content, options, origin, reference=None):
+    def analyze(self, kind, filename, content, options, origin, reference=None,
+                transport_files=None, transport_fields=None, transport_verification=None):
         if kind not in OPERATIONS or origin not in {"synthetic", "research"}:
             raise ValueError("请选择分析类型和数据来源。")
         if not isinstance(options, dict) or not content:
             raise ValueError("请提供非空文件和 JSON 对象形式的参数。")
+        transport_mode = kind == "md_transport"
+        if transport_files and not transport_mode:
+            raise ValueError("输运原始文件只能用于 MD 输运导入。")
+        transport_inputs = (build_transport_inputs(filename, content, options, transport_files)
+                            if transport_mode else {})
         importing = kind in {"md", "equipment"}
         uploads = [(filename, content)]
+        if transport_mode:
+            uploads.extend(pair for pair in transport_inputs.values() if pair not in uploads)
         if reference is not None:
             if not importing:
                 raise ValueError("只有轨迹与设备场导入接受独立参考文件。")
@@ -82,10 +188,14 @@ class Workspace:
                 raise ValueError("上传文件为空。")
         config = dict(kind=kind, options=options, origin=origin)
         source_key = digest(content)
+        transport_checksums = {role: (source_key if data is content else digest(data))
+                               for role, (name, data) in transport_inputs.items()}
+        transport_keys = [(role, transport_inputs[role][0], transport_checksums[role])
+                          for role in sorted(transport_inputs)]
         if reference is not None:
             config["reference"] = {"filename": reference[0], "sha256": digest(reference[1])}
         run_id = "run-" + digest(json_bytes([self.project, self.operator, self.commit,
-                                            filename, source_key, config]))
+                                            filename, source_key, transport_keys, config]))
         if (self.runs / run_id).exists():
             return self.detail(run_id)
         records, names, contents = {}, {}, {}
@@ -101,23 +211,86 @@ class Workspace:
             names[artifact], contents[checksum] = name, data
             return artifact
 
-        raw_id = add(filename, content, "source", checksum=source_key)
+        raw_ids = {}
+        if transport_mode:
+            for role, (name, data) in transport_inputs.items():
+                raw_ids[role] = add(name, data, "source", checksum=transport_checksums[role])
+            primary_role = next(role for role, pair in transport_inputs.items() if pair == (filename, content))
+            raw_id = raw_ids[primary_role]
+        else:
+            raw_id = add(filename, content, "source", checksum=source_key)
 
         def register(name, data):
             return add(name, data, "derived", [raw_id])
 
         ref_id = None
+        execution = None
         if kind in {"md_thermo", "md_msd", "md_transport"}:
             from packages.science.md_analysis import analyze_thermo, analyze_msd
             from packages.science.md_transport import analyze_transport
             analyzer = {"md_thermo": analyze_thermo, "md_msd": analyze_msd,
                         "md_transport": analyze_transport}[kind]
-            result = analyzer(filename, content, options)
+            analysis_name, analysis_content = filename, content
+            analysis_options = dict(options)
+            paired_transport = transport_mode and (
+                len(transport_inputs) > 1 or transport_verification is not None
+            )
+            if transport_mode:
+                if not paired_transport:
+                    metadata, execution = None, None
+                elif transport_verification is None:
+                    if "metadata" not in transport_inputs and "provenance" not in transport_inputs:
+                        raise ValueError("成对 MD 输运原始文件需要 transport_metadata。")
+                    metadata, execution = _transport_metadata(transport_inputs)
+                else:
+                    if (not isinstance(transport_verification, dict)
+                            or not isinstance(transport_verification.get("metadata"), dict)
+                            or not isinstance(transport_verification.get("execution"), dict)):
+                        raise ValueError("输运来源核验上下文无效。")
+                    metadata = transport_verification["metadata"]
+                    execution = dict(transport_verification["execution"])
+                if paired_transport:
+                    submitted_plan = _transport_candidate(
+                        options, transport_fields, ("source_plan_id", "transport_plan_id", "plan_id"), "plan ID")
+                    submitted_job = _transport_candidate(
+                        options, transport_fields, ("source_job_id", "transport_job_id", "job_id"), "job ID")
+                    if submitted_plan is not None and submitted_plan != execution["plan_id"]:
+                        raise ValueError("提交的 plan ID 与输运元数据不一致。")
+                    if submitted_job is not None and submitted_job != execution["job_id"]:
+                        raise ValueError("提交的 job ID 与输运元数据不一致。")
+                    for key in ("source_plan_id", "transport_plan_id", "plan_id",
+                                "transport_job_id", "job_id"):
+                        analysis_options.pop(key, None)
+                    analysis_options["source_job_id"] = execution["job_id"]
+            analysis_options.pop("transport_primary_role", None)
+            if not paired_transport:
+                analysis_options.pop("source_plan_id", None)
+                analysis_options.pop("transport_plan_id", None)
+                analysis_options.pop("plan_id", None)
+                analysis_options.pop("transport_job_id", None)
+                analysis_options.pop("job_id", None)
+                analysis_options.pop("field_source", None)
+            if paired_transport:
+                from packages.science.md_transport import analyze_transport_sources
+                source_payload = {role: (pair[0], pair[1], raw_ids[role])
+                                  for role, pair in transport_inputs.items()}
+                result = analyze_transport_sources(source_payload, analysis_options)
+            else:
+                result = analyzer(analysis_name, analysis_content, analysis_options)
+            if paired_transport:
+                source = dict(result.get("source") or {})
+                source.update(plan_id=execution["plan_id"], job_id=execution["job_id"],
+                              verified=execution["verified"], source_files=execution["source_files"],
+                              raw_artifact_ids=raw_ids)
+                result["source"] = source
             normalized = config
-            details = {"raw_artifact_id": raw_id, "parameters": options,
-                       "source_job_id": options.get("source_job_id"),
+            details = {"raw_artifact_id": raw_id, "parameters": analysis_options,
+                       "source_job_id": analysis_options.get("source_job_id"),
                        "analysis": "direct-output"}
-            input_ids = [raw_id]
+            if paired_transport:
+                details["transport"] = {"metadata": metadata, "provenance": execution,
+                                         "source_artifacts": raw_ids}
+            input_ids = list(raw_ids.values()) if transport_mode else [raw_id]
         elif importing:
             from packages.science import field_probe, lammps
             reference_input = None
@@ -154,9 +327,18 @@ class Workspace:
                         profile="intranet-v1", parameters_artifact=cfg_id, inputs=input_ids,
                         outputs=[out_id, detail_id], artifacts=list(records.values()),
                         quality=quality, quality_flags=sorted(flags))
+        if execution is not None:
+            manifest["execution"] = {"runner": "slurm", **execution,
+                                     "sources": [{"artifact_id": raw_ids[role], "name": pair[0], "role": role}
+                                                 for role, pair in transport_inputs.items()]}
         summary = dict(id=run_id, kind=kind, origin=origin, created_at=now, filename=filename)
+        if execution is not None:
+            summary["mode"] = "transport"
+            summary["execution"] = manifest["execution"]
         index = dict(names=names, raw=raw_id, input=cfg_id if importing or kind in {"md_thermo", "md_msd", "md_transport"} else input_ids[0],
                      result=out_id, details=detail_id)
+        if transport_mode:
+            index["raw_ids"] = raw_ids
         if ref_id is not None:
             index["reference_id"] = ref_id
         # Publish the complete run after all referenced blobs have been stored.
@@ -232,7 +414,10 @@ class Workspace:
             public.append(dict(id=key, name=index["names"][key], role=record["role"],
                                size_bytes=record["size_bytes"], sha256=record["sha256"],
                                parents=record["parents"], url=f"{base}/artifacts/{key}"))
-        return dict(**summary, **values, artifacts=public, raw_id=index["raw"],
+        view = dict(**summary, **values, artifacts=public, raw_id=index["raw"],
+                    raw_ids=index.get("raw_ids", {"primary": index["raw"]}),
                     reference_id=index.get("reference_id"),
                     manifest_url=base + "/manifest", quality=manifest["quality"],
                     quality_flags=manifest["quality_flags"])
+        view["execution"] = manifest.get("execution")
+        return view

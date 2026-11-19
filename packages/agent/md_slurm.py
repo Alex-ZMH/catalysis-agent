@@ -28,6 +28,29 @@ _RESOURCES = {"cpus", "gpus", "minutes"}
 _ROOT = Path(__file__).resolve().parents[2]
 
 
+def _transport_outputs(plan):
+    config = plan.get("spec", {}).get("config", {})
+    sampling = config.get("transport_sampling") if isinstance(config, dict) else None
+    if not isinstance(sampling, dict) or sampling.get("enabled") is not True:
+        return set()
+    outputs = sampling.get("outputs")
+    if not isinstance(outputs, dict):
+        prefix = sampling.get("output_prefix", "transport")
+        channels = sampling.get("channels", [])
+        fields = sampling.get("fields", [])
+        outputs = {"metadata": f"{prefix}_metadata.json"}
+        if any(channel != "heat_global" for channel in channels):
+            outputs["profile"] = f"{prefix}_profile.dat"
+        if "heat_global" in channels:
+            outputs["global_flux"] = f"{prefix}_global.dat"
+        if "velocity" in fields:
+            outputs["velocity"] = f"{prefix}_velocity.dat"
+    names = {name for name in outputs.values()
+             if (isinstance(name, str) and name and name == Path(name).name
+                 and "/" not in name and "\\" not in name)}
+    return names
+
+
 class SchedulerUnavailable(RuntimeError):
     """A scheduler operation failed without establishing a new state."""
 
@@ -265,9 +288,10 @@ class MDSlurm:
             step = end
         fraction = None if step is None else max(0, min(1, (step - start) / (end - start)))
         checkpoints = _checkpoint_rows(run_dir, plan, runner_state) if job_id else []
+        artifact_names = (*_ARTIFACTS, *_transport_outputs(plan))
         artifacts = [
             {"name": name, "url": f"/api/plans/{plan_id}/artifacts/{name}"}
-            for name in _ARTIFACTS if job_id and (run_dir / name).is_file()
+            for name in artifact_names if job_id and (run_dir / name).is_file()
         ]
         return dict(plan_id=plan_id, job_id=job_id, approval_state=plan["state"],
                     scheduler_state=state, reason=reason, terminal=terminal,
@@ -302,7 +326,7 @@ class MDSlurm:
                                  "start_step": wanted["step"], "target_step": wanted["step"] + steps})
 
     def artifact(self, plan, name):
-        if plan["job_id"] is None or name not in _ARTIFACTS:
+        if plan["job_id"] is None or name not in {*_ARTIFACTS, *_transport_outputs(plan)}:
             raise FileNotFoundError()
         return _open_output(self._plan_dir(plan["id"]) / "run" / name)
 

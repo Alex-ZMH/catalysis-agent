@@ -22,6 +22,15 @@ def validate_run(record):
         raise ValueError("Expected a parameters artifact")
     if record["quality"] != "accepted" and not record["quality_flags"]:
         raise ValueError("Record the reason for review or blocking")
+    execution = record.get("execution")
+    if execution is not None:
+        source_ids = [item["artifact_id"] for item in execution["sources"]]
+        if len(source_ids) != len(set(source_ids)) or not set(source_ids) <= inputs:
+            raise ValueError("Execution sources must be declared raw run inputs")
+        for source in execution["sources"]:
+            artifact = artifacts[source["artifact_id"]]
+            if artifact["role"] != "source" or any(char in source["name"] for char in "/\\"):
+                raise ValueError("Execution source must name a project-local raw artifact")
 
     graph = {}
     for name, artifact in artifacts.items():

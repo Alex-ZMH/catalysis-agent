@@ -22,10 +22,35 @@
     "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "artifacts": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/artifact"}},
     "quality": {"enum": ["accepted", "review", "blocked"]},
-    "quality_flags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+    "quality_flags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runner", "plan_id", "job_id", "verified", "source_files", "sources"],
+      "properties": {
+        "runner": {"const": "slurm"},
+        "plan_id": {"$ref": "#/$defs/externalId"},
+        "job_id": {"$ref": "#/$defs/externalId"},
+        "verified": {"type": "boolean"},
+        "verification_reason": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_files": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "pattern": "^[^\\\\/\\u0000-\\u001f]+$"}},
+        "sources": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["artifact_id", "name", "role"],
+            "properties": {
+              "artifact_id": {"$ref": "#/$defs/id"},
+              "name": {"type": "string", "minLength": 1, "pattern": "^[^\\\\/\\u0000-\\u001f]+$"},
+              "role": {"enum": ["profile", "global_flux", "metadata", "provenance", "plan", "velocity", "trajectory"]}
+            }
+          }
+        }
+      }
+    }
   },
   "$defs": {
     "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9]", "not": {"pattern": "[^A-Za-z0-9_-]"}},
+    "externalId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:+-]*$"},
     "artifact": {
       "type": "object", "additionalProperties": false,
       "required": ["artifact_id", "project_id", "sha256", "size_bytes", "format", "origin", "role", "parents"],

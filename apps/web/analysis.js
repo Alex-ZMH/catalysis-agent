@@ -340,8 +340,14 @@ function renderMdAnalysis(run, target) {
     section.id = "analysis-md_transport-result";
     section.append(element("h4", mode.name));
     const source = result.source ?? {};
-    const job = run.details?.source_job_id ?? source.source_job_id;
-    if (job != null) section.append(element("p", "来源作业号（手动标注，未经核验） · " + job, "ca-muted"));
+    const execution = run.execution ?? source;
+    if (execution.plan_id || execution.job_id) {
+    const verification = execution.verified === true ? "已核验"
+      : `未核验${execution.verification_reason ? `：${execution.verification_reason}` : ""}`;
+      section.append(metrics([["来源 plan ID", execution.plan_id], ["来源 Slurm job ID", execution.job_id],
+      ["服务端来源核验", verification],
+        ["原始来源文件", execution.source_files?.join(" · ")]]));
+    }
     const unit = result.units ?? {};
     const quantity = (value, units) => Number.isFinite(value)
       ? [formatNumber(value), units].filter(Boolean).join(" ") : "未报告";
@@ -624,7 +630,6 @@ function renderMdAnalysis(run, target) {
       renderDftHandoff(run, target);
     }
     if (run.kind === "md_thermo" || run.kind === "md_msd") renderMdAnalysis(run, target);
-    if (run.kind === "md_transport") renderTransport(run, target);
     if (run.kind === "kinetics") {
       const summary = [
         ["模型", modelLabel[result.model] ?? result.model],
@@ -650,7 +655,7 @@ function renderMdAnalysis(run, target) {
       }
       if (result.parameter_uncertainty?.reason) target.append(element("p", `参数不确定性：${result.parameter_uncertainty.reason}`));
     }
-    if (rawKind(run.kind)) {
+    if (rawKind(run.kind) || run.kind === "md_transport") {
       const science = element("div", null, "ca-a5-result");
       science.id = `analysis-${run.kind}-result`;
       const compared = run.kind === "md"
@@ -661,7 +666,8 @@ function renderMdAnalysis(run, target) {
         || (compared ? "已与独立参考比较" : "已读取原始输出"), "ca-origin");
       comparison.id = "analysis-a5-comparison";
       science.append(comparison);
-      if (run.kind === "md") renderMD(run, science);
+      if (run.kind === "md_transport") renderTransport(run, science);
+      else if (run.kind === "md") renderMD(run, science);
       else renderEquipment(run, science);
       target.append(science);
     } else {
@@ -672,8 +678,10 @@ function renderMdAnalysis(run, target) {
     const artifacts = element("ul", null, "ca-artifacts");
     for (const artifact of run.artifacts ?? []) {
       const row = element("li");
-      const label = artifact.id === run.raw_id ? "原始上传"
-        : artifact.id === run.reference_id ? "独立参考证据" : translate(artifact.role);
+      const executionSource = run.execution?.sources?.find(source => source.artifact_id === artifact.id);
+      const label = executionSource ? `Slurm 原始 ${executionSource.role}`
+        : artifact.id === run.raw_id ? "原始上传"
+          : artifact.id === run.reference_id ? "独立参考证据" : translate(artifact.role);
       if (artifact.id === run.reference_id) row.id = "analysis-a5-reference-artifact";
       row.append(
         downloadLink(artifact.url, artifact.name ?? artifact.id),
@@ -942,7 +950,7 @@ function renderMdAnalysis(run, target) {
             <option value="synthetic" selected>合成数据</option><option value="research">研究数据</option>
           </select></label>
         </div>
-        <label>上传文件<input id="analysis-upload" name="file" type="file" required></label>
+        <label>上传文件<input id="analysis-upload" name="file" type="file"></label>
         <p id="analysis-file-hint" class="ca-muted"></p>
         <fieldset id="analysis-transport" hidden disabled>
           <legend>输运数据与坐标</legend>
@@ -952,13 +960,19 @@ function renderMdAnalysis(run, target) {
               <option value="diffusivity">质量传递 · 扩散系数</option>
               <option value="viscosity">动量传递 · 动力黏度</option>
             </select></label>
-            <label>来源作业号（手动标注，可选）<input name="transport_source_job_id" maxlength="128"></label>
+            <label>来源计划 ID（与元数据核对）<input name="transport_source_plan_id" maxlength="128"></label>
+            <label>来源作业号（与元数据核对）<input name="transport_source_job_id" maxlength="128"></label>
             <label>驱动条件<select name="transport_driving">
               <option value="unspecified">未指定</option>
               <option value="gradient_imposed">施加梯度</option>
               <option value="flux_imposed">施加通量</option>
             </select></label>
             <label id="analysis-transport-sheet" hidden>XLSX 工作表（可选）<input name="transport_sheet" disabled placeholder="留空读取默认工作表"></label>
+            <label>空间剖面原始文件（可选）<input id="analysis-transport-profile" name="transport_profile" type="file" accept=".dat,.txt,.profile,.chunk,.ave"></label>
+            <label>全局通量原始文件（可选）<input id="analysis-transport-global" name="transport_global" type="file" accept=".dat,.txt,.profile,.chunk,.ave"></label>
+            <label>输运元数据（手动成对导入时必需）<input id="analysis-transport-metadata" name="transport_metadata" type="file" accept=".json,application/json"></label>
+            <label>计划/作业证明（可选）<input id="analysis-transport-provenance" name="transport_provenance" type="file" accept=".json,application/json"></label>
+            <label>速度或轨迹原始侧车（黏度可选）<input id="analysis-transport-velocity" name="transport_velocity" type="file" accept=".dat,.txt,.lammpstrj,.dump,.json"></label>
           </div>
           <p id="analysis-transport-hint" class="ca-muted"></p>
           <div class="ca-grid ca-transport-columns">
@@ -1881,8 +1895,9 @@ function renderMdAnalysis(run, target) {
       const rawSection = find("#analysis-a5");
       rawSection.hidden = rawSection.disabled = !raw;
       upload.accept = { md_transport: ".csv,.xlsx,.txt,.dat,.profile,.chunk,.ave,.out", md_thermo: ".log,.lammps,.jsonl,.txt", md_msd: ".lammpstrj,.dump,.lammpsdump,.traj,.txt", adsorption: ".zip", kinetics: ".csv,.xlsx", md: ".lammpstrj,.dump,.lammpsdump,.lammps,.traj,.txt", equipment: ".vtu" }[kind];
+      upload.required = kind !== "md_transport";
       find("#analysis-file-hint").textContent = {
-        md_transport: "上传已配对的位置、场量与带符号通量数据。支持 CSV、XLSX 及包含这些列的 LAMMPS 平均输出。分开的剖面与通量须先配对。",
+        md_transport: "可上传单文件 CSV/profile 走现有分析；也可只填授权 plan/job ID，由服务端直接读取该计划的 native profile/global/velocity 工件。手动成对文件仅作未核验来源保存。",
         md_thermo: "上传原始 log.lammps 或 thermo.jsonl；按原始采样点绘图，可切换输出列。",
         md_msd: "上传含展开坐标或坐标及镜像标记的 LAMMPS 轨迹。",
         adsorption: "上传含 study.json 和 vasprun.xml 的 VASP ZIP。",
@@ -1963,6 +1978,8 @@ function renderMdAnalysis(run, target) {
       if (result.bin_width === 0) throw new Error("空间分箱宽度须为正数。");
       const job = fields.transport_source_job_id.value.trim();
       if (job) result.source_job_id = job;
+      const plan = fields.transport_source_plan_id.value.trim();
+      if (plan) result.source_plan_id = plan;
       return result;
     }
 
@@ -2104,19 +2121,48 @@ function renderMdAnalysis(run, target) {
       event.preventDefault();
       const submit = find("#analysis-submit");
       if (submit.disabled) return;
+      if (!form.reportValidity()) return;
       let options;
       try {
         options = runOptions();
+        if (fields.kind.value === "md_transport") {
+          const sidecars = ["#analysis-transport-profile", "#analysis-transport-global",
+            "#analysis-transport-metadata", "#analysis-transport-provenance", "#analysis-transport-velocity"];
+          const paired = sidecars.some(selector => find(selector).files.length);
+          const plan = fields.transport_source_plan_id.value.trim();
+          const job = fields.transport_source_job_id.value.trim();
+          if (!upload.files[0] && (!plan || !job)) {
+            throw new Error("单文件导入需选择主文件；自动计划采集需同时填写 plan ID 和 job ID。" );
+          }
+          if (paired && !find("#analysis-transport-metadata").files[0]) {
+            throw new Error("手动成对输运文件需要上传 transport metadata；自动计划采集无需手动元数据。" );
+          }
+        }
       } catch (error) {
         setStatus(status, error.message, true);
         return;
       }
       const body = new FormData();
-      body.set("file", upload.files[0]);
+      if (upload.files[0]) body.set("file", upload.files[0]);
       body.set("kind", fields.kind.value);
       body.set("origin", fields.origin.value);
       body.set("options", JSON.stringify(options));
-      if (rawKind(fields.kind.value) && reference.files[0]) body.set("reference", reference.files[0]);
+      if (fields.kind.value === "md_transport") {
+        for (const [selector, key] of [["#analysis-transport-profile", "transport_profile"],
+                                        ["#analysis-transport-global", "transport_global"],
+                                        ["#analysis-transport-metadata", "transport_metadata"],
+                                        ["#analysis-transport-provenance", "transport_provenance"],
+                                        ["#analysis-transport-velocity", "transport_velocity"]]) {
+          const file = find(selector).files[0];
+          if (file) body.set(key, file);
+        }
+        const plan = fields.transport_source_plan_id.value.trim();
+        const job = fields.transport_source_job_id.value.trim();
+        if (plan) body.set("transport_plan_id", plan);
+        if (job) body.set("transport_job_id", job);
+      } else if (rawKind(fields.kind.value) && reference.files[0]) {
+        body.set("reference", reference.files[0]);
+      }
       const version = ++viewVersion;
       submit.disabled = true;
       results.replaceChildren();

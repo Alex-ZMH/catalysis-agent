@@ -149,3 +149,5 @@
 #studio .ca-transport-coefficient strong { font-size: 21px; font-variant-numeric: tabular-nums; }
 #studio .ca-transport-result .ca-md-charts { margin-top: 12px; }
 #studio .ca-transport-notes { padding-inline-start: 20px; }
+#studio #analysis-transport input[type="file"] { min-width: 0; }
+#studio #analysis-transport .ca-muted { max-width: 72rem; }

@@ -25,7 +25,8 @@ from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.egress import restrict_egress
 from packages.agent.md_slurm import MDSlurm, SchedulerUnavailable, SlurmBroker
 from packages.agent.slurm import SyntheticSlurm
-from packages.agent.workspace import Workspace, json_bytes
+from packages.agent.workspace import (Workspace, build_transport_inputs, json_bytes,
+                                      read_transport_metadata)
 from scripts.frontend_baseline import git as baseline_git
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,8 +52,13 @@ def form_fields(headers, data, *, md_job=False):
         b"Content-Type: " + content_type.encode("ascii") + b"\r\nMIME-Version: 1.0\r\n\r\n" + data)
     if not message.is_multipart() or message.defects:
         raise ValueError("上传表单不完整。")
-    files = {"file", "potential"} if md_job else {"file", "reference"}
-    allowed = files | ({"run_id", "artifact_id", "options"} if md_job else {"options", "kind", "origin"})
+    files = ({"file", "potential"} if md_job else {
+        "file", "reference", "transport_profile", "transport_global", "transport_metadata",
+        "transport_provenance", "transport_plan", "transport_velocity", "transport_trajectory",
+    })
+    allowed = files | ({"run_id", "artifact_id", "options"} if md_job else {
+        "options", "kind", "origin", "transport_plan_id", "transport_job_id",
+    })
     result = {}
     for part in message.iter_parts():
         key = part.get_param("name", header="Content-Disposition")
@@ -62,13 +68,18 @@ def form_fields(headers, data, *, md_job=False):
             raise ValueError("上传字段无效或重复。")
         value = part.get_payload(decode=True)
         if key in files:
+            if not isinstance(value, bytes):
+                raise ValueError("上传文件内容无效。")
             result[key] = (part.get_filename() or "", value)
         else:
+            if not isinstance(value, bytes):
+                raise ValueError("表单字段内容无效。")
             if len(value) > 256 * 1024:
                 raise ValueError("配置超过 256 KiB。")
             result[key] = value.decode("utf-8")
     if "file" not in result and not md_job:
-        raise ValueError("请选择文件。")
+        if not (result.get("kind") == "md_transport" and result.get("transport_plan_id")):
+            raise ValueError("请选择文件。")
     try:
         result["options"] = json.loads(result.get("options", "{}"))
         if not isinstance(result["options"], dict):
@@ -147,6 +158,108 @@ def plan_spec(store, body, synthetic_submission):
             raise ValueError(f"{field} 必须是 {low} 到 {high} 之间的整数。")
     return {**source, **body, "mode": "slurm-synthetic" if synthetic else "plan-only",
             "policy_id": "a6-synthetic-v100-v1" if synthetic else "intranet-v1"}
+
+
+def _transport_plan_outputs(plan):
+    """Return output basenames declared by an authorized MD plan."""
+    spec = plan.get("spec") if isinstance(plan, dict) else None
+    config = spec.get("config") if isinstance(spec, dict) else None
+    sampling = config.get("transport_sampling") if isinstance(config, dict) else None
+    if not isinstance(sampling, dict) or sampling.get("enabled") is not True:
+        return set()
+    outputs = sampling.get("outputs")
+    if not isinstance(outputs, dict):
+        prefix = sampling.get("output_prefix", "transport")
+        channels = sampling.get("channels", [])
+        fields = sampling.get("fields", [])
+        outputs = {"metadata": f"{prefix}_metadata.json"}
+        if any(channel != "heat_global" for channel in channels):
+            outputs["profile"] = f"{prefix}_profile.dat"
+        if "heat_global" in channels:
+            outputs["global_flux"] = f"{prefix}_global.dat"
+        if "velocity" in fields:
+            outputs["velocity"] = f"{prefix}_velocity.dat"
+    return {str(name).replace("\\", "/").rsplit("/", 1)[-1]
+            for name in outputs.values() if isinstance(name, str) and name}
+
+
+def _transport_source_roles(inputs):
+    return {role: pair for role, pair in inputs.items()
+            if role not in {"metadata", "provenance", "plan"}}
+
+
+def resolve_uploaded_transport(approvals, filename, content, options, transport_files):
+    """Parse an uploaded claim, but never promote it to server-verified trust."""
+    inputs = build_transport_inputs(filename, content, options, transport_files)
+    metadata, claim = read_transport_metadata(inputs)
+    execution = dict(claim, verified=False,
+                     verification_reason="原始输运文件由请求上传，未由授权计划工件读取")
+    # Resolve the project-scoped record when possible so the UI can still show
+    # the submitted IDs, but uploaded bytes are never marked as verified.
+    try:
+        plan = approvals.get(claim["plan_id"]) if approvals is not None else None
+    except FileNotFoundError:
+        plan = None
+    if plan is None:
+        execution["verification_reason"] = "输运来源计划不是当前项目的授权记录"
+    elif plan.get("job_id") != claim["job_id"]:
+        execution["verification_reason"] = "上传声明的 job ID 与授权计划记录不一致"
+    return {"metadata": metadata, "execution": execution}
+
+
+def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, upload_limit):
+    """Read native transport outputs from the authorized project's plan spool."""
+    if approvals is None or scheduler is None:
+        raise ValueError("当前项目未配置可读取 Slurm 工件的计划存储。")
+    try:
+        plan = approvals.get(plan_id)
+    except FileNotFoundError as error:
+        raise ValueError("输运来源计划不是当前项目的授权记录。") from error
+    spec = plan.get("spec", {})
+    if (plan.get("id") != plan_id or plan.get("state") != "submitted"
+            or plan.get("job_id") != job_id
+            or spec.get("workflow") != "md-lammps" or spec.get("mode") != "slurm-md"):
+        raise ValueError("计划 ID、job ID 或计划类型与实际项目记录不一致。")
+    outputs = _transport_plan_outputs(plan)
+    if not outputs:
+        raise ValueError("授权计划未声明 transport_sampling 输出。")
+    role_by_suffix = {"_profile.dat": "profile", "_global.dat": "global_flux",
+                      "_velocity.dat": "velocity", "_metadata.json": "metadata",
+                      "-metadata.json": "metadata"}
+    sources = {}
+    for name in sorted(outputs):
+        role = next((suffix_role for suffix, suffix_role in role_by_suffix.items()
+                     if name.endswith(suffix)), None)
+        if role is None:
+            continue
+        try:
+            stream, size = scheduler.artifact(plan, name)
+        except FileNotFoundError:
+            continue
+        if size <= 0 or size > upload_limit:
+            raise ValueError(f"授权计划工件超过导入大小限制：{name}")
+        with stream:
+            raw = stream.read(size + 1)
+        if len(raw) != size:
+            raise ValueError(f"授权计划工件读取不完整：{name}")
+        sources["transport_" + role] = (name, raw)
+    actual = _transport_source_roles({key.removeprefix("transport_"): value
+                                      for key, value in sources.items()})
+    if not actual:
+        raise ValueError("授权计划没有可读取的 transport profile/global 输出。")
+    primary_role = "profile" if "profile" in actual else "global_flux"
+    normalized_options = dict(options, transport_primary_role=primary_role)
+    plan_bytes = json_bytes(plan)
+    sources["transport_plan"] = (f"{plan_id}.json", plan_bytes)
+    metadata = {"schema": "md_transport.v1", "provenance": {
+        "plan_id": plan_id, "job_id": job_id,
+        "source_files": sorted(pair[0] for pair in sources.values()
+                                if pair[0] != f"{plan_id}.json")}}
+    source_files = sorted(pair[0] for pair in sources.values())
+    execution = {"plan_id": plan_id, "job_id": job_id, "source_files": source_files,
+                 "verified": True,
+                 "verification_reason": "服务端从当前项目授权计划工件读取"}
+    return (normalized_options, sources, {"metadata": metadata, "execution": execution})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -586,21 +699,54 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/md-job":
                 self._prepare_md_job(fields)
                 return
-            name, blob = fields["file"]
+            transport_verification = None
+            auto_transport = path == "/api/runs" and "file" not in fields
+            if auto_transport:
+                if fields.get("kind") != "md_transport":
+                    raise ValueError("自动输运采集只适用于 MD 输运分析。")
+                plan_id, job_id = fields.get("transport_plan_id"), fields.get("transport_job_id")
+                if not plan_id or not job_id:
+                    raise ValueError("自动输运采集需要 plan ID 和 job ID。")
+                options, collected, transport_verification = resolve_plan_transport(
+                    self.approvals, self.approvals.md_scheduler, plan_id, job_id,
+                    fields["options"], self.server.upload_limit)
+                primary_role = options["transport_primary_role"]
+                primary = collected.pop("transport_" + primary_role, None)
+                if primary is None:
+                    raise ValueError("授权计划没有可读取的主输运工件。")
+                name, blob = primary
+                fields["options"] = options
+                transport_files = collected
+                transport_fields = {"transport_plan_id": plan_id, "transport_job_id": job_id}
+            else:
+                name, blob = fields["file"]
+                transport_files = {key: fields[key] for key in sorted(fields)
+                                   if key.startswith("transport_") and isinstance(fields[key], tuple)}
+                transport_fields = {key: fields[key] for key in ("transport_plan_id", "transport_job_id")
+                                    if key in fields}
+                if transport_files and fields.get("kind") != "md_transport":
+                    raise ValueError("输运原始文件只能用于 MD 输运导入。")
+                if transport_files:
+                    transport_verification = resolve_uploaded_transport(
+                        self.approvals, name, blob, fields["options"], transport_files)
             if path == "/api/md-handoff":
-                if "reference" in fields:
+                if "reference" in fields or any(key.startswith("transport_") for key in fields):
                     raise ValueError("结构交接只接收一个 VASP 结构文件。")
                 self._md_handoff(name, blob, fields["options"])
                 return
             if path == "/api/cell":
                 from packages.science.cell import plan_from_poscar
+                if any(key.startswith("transport_") for key in fields):
+                    raise ValueError("晶胞预检不接收输运原始文件。")
                 if "reference" in fields:
                     raise ValueError("晶胞预检只接收一个 POSCAR。")
                 result = plan_from_poscar(blob, fields["options"])
             else:
                 result = self._run_view(self.workspace.analyze(
                     fields.get("kind"), name, blob, fields["options"],
-                    fields.get("origin"), fields.get("reference")
+                    fields.get("origin"), fields.get("reference"),
+                    transport_files=transport_files, transport_fields=transport_fields,
+                    transport_verification=transport_verification,
                 ))
             self._send(200, json_bytes(result))
         finally:
