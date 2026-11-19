@@ -1219,6 +1219,61 @@ function renderMdAnalysis(run, target) {
         <p id="analysis-history-status" role="status"></p>
         <ul id="analysis-history-list"></ul>
       </section>
+      <section id="engineering-workbench" class="ca-engineering-workbench" aria-labelledby="engineering-title">
+        <div class="ca-heading">
+          <h2 id="engineering-title">工程工况工作台</h2>
+          <div class="ca-md-actions">
+            <button id="engineering-new" type="button">新建工况</button>
+            <button id="engineering-refresh" type="button">刷新来源</button>
+          </div>
+        </div>
+        <p class="ca-muted ca-engineering-lede">
+          在当前项目中组合已有 MD 输运物性与动力学拟合结果。页面只保存来源引用、已有数值/公式/单位、工况和拟合窗口；不会重新求解或替代原始分析。
+        </p>
+        <form id="engineering-form">
+          <div class="ca-grid">
+            <label>MD 输运物性来源
+              <select id="engineering-transport-run"><option value="">选择已有 MD 输运结果</option></select>
+            </label>
+            <label>动力学拟合来源
+              <select id="engineering-kinetics-run"><option value="">选择已有动力学结果</option></select>
+            </label>
+          </div>
+          <div id="engineering-source-summary" class="ca-engineering-source-grid" aria-live="polite"></div>
+          <fieldset>
+            <legend>工程工况与拟合窗口</legend>
+            <div class="ca-grid">
+              <label>工况名称<input id="engineering-name" maxlength="160" placeholder="例如：入口温度 300 K · 稳态流动"></label>
+              <label>工况 ID<input id="engineering-condition-id" maxlength="128" placeholder="可选：外部工况编号"></label>
+            </div>
+            <label>工况参数 JSON（用户确认）
+              <textarea id="engineering-conditions" rows="5" placeholder='{"temperature_K":300,"pressure_bar":1,"composition":{}}'></textarea>
+            </label>
+            <div class="ca-grid">
+              <label>输运拟合窗口 JSON（来源核验口径）
+                <textarea id="engineering-transport-window" rows="4" readonly placeholder='{"position_min":null,"position_max":null,"time_min":null,"time_max":null}'></textarea>
+              </label>
+              <label>动力学拟合窗口 JSON（来源核验口径）
+                <textarea id="engineering-kinetics-window" rows="4" readonly placeholder='{"temperature_min":null,"temperature_max":null,"partition":"train"}'></textarea>
+              </label>
+            </div>
+            <p class="ca-muted">数值、公式、单位和来源来自所选原结果；服务端以原结果拟合窗口为准，工况参数由你确认后保存。空值显示为“未报告”，不会被 UI 推断。</p>
+          </fieldset>
+          <div class="ca-md-actions">
+            <button id="engineering-save" class="ca-primary" type="submit">保存工程工况</button>
+            <button id="engineering-export" type="button" disabled>导出当前工况</button>
+            <span id="engineering-status" class="ca-engineering-status" role="status"></span>
+          </div>
+        </form>
+        <section id="engineering-current" class="ca-engineering-record" aria-live="polite" hidden></section>
+        <section class="ca-engineering-records" aria-labelledby="engineering-records-title">
+          <div class="ca-heading">
+            <h3 id="engineering-records-title">已保存工程工况</h3>
+            <button id="engineering-records-refresh" type="button">刷新记录</button>
+          </div>
+          <ul id="engineering-record-list"></ul>
+        </section>
+      </section>
       <section id="a6-panel" aria-labelledby="a6-title">
         <div class="ca-heading"><h2 id="a6-title">重计算计划</h2><button id="a6-refresh" type="button">刷新计划和输入</button></div>
         <p id="a7-recovery" class="ca-muted" hidden></p>
@@ -2271,6 +2326,640 @@ function renderMdAnalysis(run, target) {
     };
   }
 
+  function mountEngineering(find, panel, request, signal, role, openRun) {
+    const root = find("#engineering-workbench");
+    if (!root) return;
+    const form = find("#engineering-form");
+    const transportSelect = find("#engineering-transport-run");
+    const kineticsSelect = find("#engineering-kinetics-run");
+    const sourceSummary = find("#engineering-source-summary");
+    const nameField = find("#engineering-name");
+    const conditionIdField = find("#engineering-condition-id");
+    const conditionsField = find("#engineering-conditions");
+    const transportWindowField = find("#engineering-transport-window");
+    const kineticsWindowField = find("#engineering-kinetics-window");
+    const save = find("#engineering-save");
+    const exportButton = find("#engineering-export");
+    const status = find("#engineering-status");
+    const currentPanel = find("#engineering-current");
+    const recordList = find("#engineering-record-list");
+    const refreshSourcesButton = find("#engineering-refresh");
+    const refreshRecordsButton = find("#engineering-records-refresh");
+    const newButton = find("#engineering-new");
+    const jsonHeaders = { "Content-Type": "application/json" };
+    const editable = role !== "viewer";
+    const state = {
+      sources: [], details: new Map(), records: [], current: null,
+      endpoint: true, busy: false, sourceVersion: 0,
+    };
+
+    const first = (...values) => values.find(value => value !== undefined && value !== null && value !== "");
+    const runId = run => first(run?.id, run?.run_id);
+    const recordData = record => record?.engineering
+      ?? record?.result?.engineering ?? record?.details?.engineering ?? record ?? {};
+    const recordId = record => first(record?.id, record?.record_id,
+      recordData(record)?.id, recordData(record)?.record_id);
+    const recordSources = (record, data = recordData(record)) =>
+      data.sources ?? record?.sources ?? data.source ?? record?.source ?? {};
+    const jsonText = value => value == null ? ""
+      : typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    const valueText = value => value == null ? "未报告"
+      : typeof value === "number" ? (Number.isFinite(value) ? formatNumber(value) : "未报告")
+        : typeof value === "string" ? value : JSON.stringify(value);
+    const sourceContainers = run => [
+      run?.execution, run?.result?.source, run?.details?.transport?.provenance,
+      run?.details?.provenance, run?.details, run?.result,
+    ].filter(value => value && typeof value === "object");
+    const sourceValue = (run, keys) => {
+      for (const container of sourceContainers(run)) {
+        const value = first(...keys.map(key => container[key]));
+        if (value != null) return value;
+      }
+      return undefined;
+    };
+    const runJob = run => sourceValue(run, ["job_id", "scheduler_job_id", "slurm_job_id", "source_job_id"]);
+    const runPlan = run => sourceValue(run, ["plan_id", "source_plan_id"]);
+    const runArtifacts = run => (run?.artifacts ?? []).map(artifact => ({
+      id: first(artifact.id, artifact.artifact_id),
+      name: artifact.name ?? artifact.id ?? artifact.artifact_id,
+      role: artifact.role,
+      url: artifact.url,
+    })).filter(artifact => artifact.id || artifact.url);
+    const modelFormula = run => {
+      const model = String(run?.result?.model ?? "").toLowerCase();
+      if (model === "arrhenius_known_k" || model.includes("arrhenius")) {
+        return "k(T)=A exp(-Ea/(R T))";
+      }
+      if (model === "initial_rate_power_law" || model.includes("power_law")
+          || model.includes("power-law")) {
+        const reactants = Array.isArray(run?.input?.reactants) ? run.input.reactants
+          .filter(reactant => typeof reactant === "string" && reactant) : [];
+        if (reactants.length) {
+          return "rate = k_ref " + reactants.map(reactant =>
+            "(C_" + reactant + "/C_ref_" + reactant + ")^order_" + reactant).join(" * ");
+        }
+      }
+      return undefined;
+    };
+    const runFormula = run => first(run?.result?.formula, run?.result?.equation,
+      run?.result?.model_formula, run?.result?.fit?.formula, run?.details?.formula,
+      modelFormula(run));
+    const runUnits = run => {
+      const result = run?.result ?? {};
+      const units = result.units ?? run?.details?.units;
+      if (units) return units;
+      const fallback = {
+        coefficient: result.coefficient_unit,
+        gradient: result.gradient_unit,
+        flux: result.flux_unit,
+        prefactor: result.prefactor_unit,
+        activation_energy: result.activation_energy_unit,
+        rate: result.rate_at_reference_unit,
+      };
+      return Object.fromEntries(Object.entries(fallback).filter(([, value]) => value != null));
+    };
+    const observationRange = (rows, getter) => {
+      const values = (Array.isArray(rows) ? rows : []).map(getter)
+        .filter(value => typeof value === "number" && Number.isFinite(value));
+      return values.length ? { min: Math.min(...values), max: Math.max(...values) } : null;
+    };
+    const observationStrings = (rows, key) => [...new Set(
+      (Array.isArray(rows) ? rows : []).map(row => row?.[key])
+        .filter(value => typeof value === "string")
+    )].sort();
+    const kineticsObservationWindow = run => {
+      const input = run?.input;
+      const observations = input?.observations;
+      if (!Array.isArray(observations) || !observations.length) return undefined;
+      const partitioned = observations.filter(row => row?.partition === "train"
+        || row?.partition === "holdout");
+      const partitionDefaulted = partitioned.length === 0;
+      const training = partitionDefaulted ? observations
+        : observations.filter(row => row?.partition === "train");
+      const holdout = partitionDefaulted ? []
+        : observations.filter(row => row?.partition === "holdout");
+      const window = {
+        status: "reported",
+        source: "source.input.observations",
+        fit_partition: "train",
+        holdout_partition: "holdout",
+        partition_source: partitionDefaulted ? "default_train" : "input.partition",
+        temperature_K: {
+          unit: "K",
+          training: observationRange(training, row => row?.temperature_K),
+          all: observationRange(observations, row => row?.temperature_K),
+          holdout: observationRange(holdout, row => row?.temperature_K),
+        },
+        batch_ids: observationStrings(observations, "batch_id"),
+        partitions: observationStrings(observations, "partition"),
+        training_batch_ids: observationStrings(training, "batch_id"),
+        holdout_batch_ids: observationStrings(holdout, "batch_id"),
+      };
+      if (input.model === "initial_rate_power_law") {
+        const reactants = Array.isArray(input.reactants) ? input.reactants : [];
+        const unit = input.concentration_unit ?? "mol/L";
+        const concentration_ranges = {};
+        for (const reactant of reactants) {
+          const concentrations = rows => observationRange(rows,
+            row => row?.concentrations?.[reactant]);
+          concentration_ranges[reactant] = {
+            unit,
+            training: concentrations(training),
+            all: concentrations(observations),
+            holdout: concentrations(holdout),
+          };
+        }
+        window.concentration_ranges = concentration_ranges;
+        window.temperature_K.source_model_temperature = input.temperature_K ?? null;
+      }
+      return window;
+    };
+    const runWindow = run => {
+      const result = run?.result ?? {};
+      const details = run?.details ?? {};
+      if (run?.kind === "md_transport") {
+        return first(result.selection, result.fit_window, result.window, details.fit_window);
+      }
+      if (run?.kind === "kinetics") {
+        return kineticsObservationWindow(run) ?? first(result.fit_window, result.fit?.window,
+          details.fit_window, details.fit_diagnostics?.window,
+          { status: "unavailable_not_reported" });
+      }
+      return first(result.fit_window, result.fit?.window, details.fit_window,
+        details.fit_diagnostics?.window, { status: "unavailable_not_reported" });
+    };
+    const runConditions = run => first(run?.result?.conditions, run?.result?.condition,
+      run?.input?.conditions, run?.input?.condition,
+      run?.details?.conditions, run?.details?.condition,
+      run?.details?.parameters?.conditions);
+    const runNumbers = run => {
+      const result = run?.result ?? {};
+      const rows = [];
+      if (run?.kind === "md_transport") {
+        if (result.coefficient != null) rows.push(["传递系数", [valueText(result.coefficient),
+          result.coefficient_unit ?? result.units?.coefficient].filter(Boolean).join(" ")]);
+        if (result.gradient != null) rows.push(["场量梯度", [valueText(result.gradient),
+          result.gradient_unit ?? result.units?.gradient].filter(Boolean).join(" ")]);
+        if (result.mean_flux != null) rows.push(["平均通量/应力", [valueText(result.mean_flux),
+          result.units?.flux].filter(Boolean).join(" ")]);
+      } else if (run?.kind === "kinetics") {
+        if (result.model != null) rows.push(["模型", modelLabel[result.model] ?? result.model]);
+        for (const [label, key, unitKey] of [
+          ["指前因子", "prefactor", "prefactor_unit"],
+          ["活化能", "activation_energy", "activation_energy_unit"],
+          ["参考浓度速率", "rate_at_reference", "rate_at_reference_unit"],
+          ["训练集对数 RMSE", "train_log_rmse", null],
+          ["留出集对数 RMSE", "holdout_log_rmse", null],
+        ]) {
+          if (result[key] != null) rows.push([label, [valueText(result[key]), result[unitKey]].filter(Boolean).join(" ")]);
+        }
+        if (result.orders && typeof result.orders === "object") {
+          rows.push(["反应级数", valueText(result.orders)]);
+        }
+      }
+      return rows;
+    };
+
+    const rangeSummary = range => range?.min != null && range?.max != null
+      ? valueText(range.min) + "–" + valueText(range.max) : "未报告";
+    const windowSummary = window => {
+      if (!window || window.status === "unavailable_not_reported") {
+        return "未报告（来源未报告）";
+      }
+      if (window.selection != null) return jsonText(window.selection);
+      const parts = [];
+      if (window.source) parts.push("来源 " + window.source);
+      if (window.fit_partition) parts.push("拟合 " + window.fit_partition);
+      if (window.holdout_partition) parts.push("留出 " + window.holdout_partition);
+      const temperature = window.temperature_K;
+      if (temperature) {
+        parts.push("train " + rangeSummary(temperature.training) + " "
+          + (temperature.unit ?? "K"));
+        parts.push("holdout " + rangeSummary(temperature.holdout) + " "
+          + (temperature.unit ?? "K"));
+      }
+      if (window.training_batch_ids?.length) {
+        parts.push("训练批次 " + window.training_batch_ids.join(", "));
+      }
+      if (window.holdout_batch_ids?.length) {
+        parts.push("留出批次 " + window.holdout_batch_ids.join(", "));
+      }
+      return parts.length ? parts.join(" · ") : jsonText(window);
+    };
+
+    function sourceCard(label, run) {
+      const card = element("article", null, "ca-engineering-source-card");
+      const id = runId(run);
+      const artifacts = runArtifacts(run);
+      const job = runJob(run);
+      const plan = runPlan(run);
+      card.append(element("h4", label + " · " + (run?.filename ?? id ?? "未报告")));
+      card.append(metrics([
+        ["公式", valueText(runFormula(run))],
+        ["单位", valueText(runUnits(run))],
+        ["来源工况", valueText(runConditions(run))],
+        ["拟合窗口", windowSummary(runWindow(run))],
+      ]));
+      card.append(metrics([
+        ["运行 ID", id], ["来源", originLabel[run?.origin] ?? run?.origin],
+        ["关联 plan", plan], ["关联作业号", job],
+        ...runNumbers(run),
+      ]));
+      const links = element("div", null, "ca-engineering-links");
+      const open = element("button", "打开原结果");
+      open.type = "button";
+      open.disabled = !id;
+      open.addEventListener("click", () => openRun?.(id, run.kind, open));
+      links.append(open);
+      if (run?.manifest_url) links.append(downloadLink(run.manifest_url, "下载原运行清单"));
+      for (const artifact of artifacts) {
+        if (artifact.url && artifact.role === "source") {
+          links.append(downloadLink(artifact.url, "原件 · " + artifact.name));
+        }
+      }
+      if (links.childElementCount) card.append(links);
+      const snapshot = {
+        formula: runFormula(run),
+        units: runUnits(run),
+        conditions: runConditions(run),
+        fitting_window: runWindow(run),
+      };
+      if (Object.values(snapshot).some(value => value != null)) {
+        card.append(details("公式、单位、来源工况与拟合窗口", snapshot));
+      }
+      return card;
+    }
+
+    function renderSources() {
+      sourceSummary.replaceChildren();
+      const transport = state.details.get(transportSelect.value)
+        ?? state.sources.find(run => runId(run) === transportSelect.value);
+      const kinetics = state.details.get(kineticsSelect.value)
+        ?? state.sources.find(run => runId(run) === kineticsSelect.value);
+      if (!transport && !kinetics) {
+        sourceSummary.append(element("p", "请选择已有 MD 输运物性和/或动力学拟合结果。", "ca-muted"));
+        return;
+      }
+      if (transport) sourceSummary.append(sourceCard("MD 输运物性", transport));
+      if (kinetics) sourceSummary.append(sourceCard("动力学拟合", kinetics));
+    }
+
+    function populateSourceSelect(select, kind) {
+      const selected = select.value;
+      const options = state.sources.filter(run => run.kind === kind);
+      select.replaceChildren(new Option(kind === "md_transport"
+        ? "选择已有 MD 输运结果" : "选择已有动力学结果", ""));
+      for (const run of options) {
+        select.append(new Option(
+          (run.filename ?? "未命名") + " · " + (run.created_at ?? "时间未报告") + " · "
+            + (runId(run) ?? "ID 未报告"),
+          runId(run) ?? "",
+        ));
+      }
+      select.value = options.some(run => runId(run) === selected) ? selected : "";
+    }
+
+    async function loadRun(id, kind) {
+      if (!id) return null;
+      if (state.details.has(id)) return state.details.get(id);
+      const summary = state.sources.find(run => runId(run) === id);
+      if (!summary) return null;
+      const detail = await request("/api/runs/" + encodeURIComponent(id), undefined, kind);
+      state.details.set(id, detail);
+      return detail;
+    }
+
+    function prefillFromSources() {
+      const transport = state.details.get(transportSelect.value);
+      const kinetics = state.details.get(kineticsSelect.value);
+      transportWindowField.value = jsonText(runWindow(transport));
+      kineticsWindowField.value = jsonText(runWindow(kinetics));
+      if (!conditionsField.value.trim()) {
+        const condition = first(runConditions(transport), runConditions(kinetics));
+        if (condition != null) conditionsField.value = jsonText(condition);
+      }
+    }
+
+    async function loadSourceSelection() {
+      const version = ++state.sourceVersion;
+      try {
+        await Promise.all([
+          loadRun(transportSelect.value, "md_transport"),
+          loadRun(kineticsSelect.value, "kinetics"),
+        ]);
+        if (version !== state.sourceVersion) return;
+        prefillFromSources();
+        renderSources();
+      } catch (error) {
+        if (version === state.sourceVersion) setStatus(status, "读取来源运行失败：" + error.message, true);
+      }
+    }
+
+    function sourceRef(run) {
+      if (!run) return null;
+      return {
+        run_id: runId(run),
+        artifact_ids: runArtifacts(run).map(artifact => artifact.id).filter(Boolean),
+        plan_id: runPlan(run) ?? null,
+        job_id: runJob(run) ?? null,
+      };
+    }
+
+    function domainSnapshot(run, domain, window, conditions) {
+      if (!run) return null;
+      const result = run.result ?? {};
+      const snapshot = {
+        source_run_id: runId(run),
+        source_artifact_ids: runArtifacts(run).map(artifact => artifact.id).filter(Boolean),
+        plan_id: runPlan(run) ?? null,
+        job_id: runJob(run) ?? null,
+        value: domain === "transport" ? result.coefficient
+          : first(result.rate_at_reference, result.activation_energy),
+        coefficient: domain === "transport" ? result.coefficient : null,
+        formula: runFormula(run) ?? null,
+        units: runUnits(run),
+        window: window ?? null,
+        conditions: conditions ?? null,
+      };
+      if (domain === "kinetics") {
+        snapshot.parameters = first(result.parameters, result.orders, {
+          model: result.model,
+          prefactor: result.prefactor,
+          activation_energy: result.activation_energy,
+          rate_at_reference: result.rate_at_reference,
+        });
+      }
+      return snapshot;
+    }
+
+    function parseJson(field, label) {
+      const raw = field.value.trim();
+      if (!raw) return null;
+      let value;
+      try {
+        value = JSON.parse(raw);
+      } catch {
+        throw new Error(label + "必须是合法 JSON。");
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(label + "必须是 JSON 对象。");
+      }
+      return value;
+    }
+
+    function payloadFromForm() {
+      const transport = state.details.get(transportSelect.value);
+      const kinetics = state.details.get(kineticsSelect.value);
+      if (!transport || !kinetics) throw new Error("请选择已有 MD 输运物性和动力学拟合结果。");
+      const conditions = parseJson(conditionsField, "工况参数");
+      const windows = {
+        transport: parseJson(transportWindowField, "输运拟合窗口"),
+        kinetics: parseJson(kineticsWindowField, "动力学拟合窗口"),
+      };
+      const conditionName = nameField.value.trim();
+      const conditionId = conditionIdField.value.trim();
+      if (!conditionName && !conditionId) throw new Error("请填写工况名称或工况 ID。");
+      return {
+        schema_version: 1,
+        name: conditionName || null,
+        condition_id: conditionId || null,
+        conditions,
+        windows,
+        sources: {
+          transport: sourceRef(transport),
+          kinetics: sourceRef(kinetics),
+        },
+        transport: domainSnapshot(transport, "transport", windows.transport, conditions),
+        kinetics: domainSnapshot(kinetics, "kinetics", windows.kinetics, conditions),
+      };
+    }
+
+    function renderCurrent(record) {
+      const data = recordData(record);
+      const id = recordId(record);
+      currentPanel.hidden = !record;
+      exportButton.disabled = !id || !state.endpoint;
+      if (!record) {
+        currentPanel.replaceChildren();
+        return;
+      }
+      const sources = recordSources(record, data);
+      currentPanel.replaceChildren(
+        element("h3", data.name ?? record.name ?? "已保存工程工况"),
+        metrics([
+          ["记录 ID", id], ["工况 ID", data.condition_id ?? record.condition_id],
+          ["保存时间", first(record.updated_at, record.created_at, data.updated_at)],
+          ["输运来源 run", data.transport?.source_run_id ?? sources.transport?.run_id
+            ?? sources.transport?.source_run_id],
+          ["动力学来源 run", data.kinetics?.source_run_id ?? sources.kinetics?.run_id
+            ?? sources.kinetics?.source_run_id],
+        ]),
+        details("已保存工况、来源引用与拟合窗口", {
+          conditions: data.conditions,
+          windows: data.windows,
+          sources,
+          transport: data.transport,
+          kinetics: data.kinetics,
+        }),
+      );
+      const exportUrl = first(record.export_url, data.export_url, data.links?.export, record.links?.export, record.links?.export_url);
+      if (exportUrl) currentPanel.append(downloadLink(exportUrl, "导出此工况记录"));
+    }
+
+    function renderRecords() {
+      recordList.replaceChildren();
+      if (!state.records.length) {
+        recordList.append(element("li", "暂无已保存工程工况。", "ca-muted"));
+        return;
+      }
+      for (const record of state.records) {
+        const data = recordData(record);
+        const id = recordId(record);
+        const button = element("button",
+          (data.name ?? record.name ?? "未命名工况") + " · " + (id ?? "ID 未报告"));
+        button.type = "button";
+        if (id && id === recordId(state.current)) {
+          button.setAttribute("aria-current", "true");
+        }
+        button.append(element("small", (data.condition_id ?? record.condition_id ?? "无工况 ID")
+          + " · " + first(record.updated_at, record.created_at, "时间未报告")));
+        button.addEventListener("click", () => void openRecord(id, button));
+        const row = element("li");
+        row.append(button);
+        recordList.append(row);
+      }
+    }
+
+    function syncButtons() {
+      save.disabled = state.busy || !editable || !state.endpoint;
+      exportButton.disabled = state.busy || !recordId(state.current) || !state.endpoint;
+      refreshSourcesButton.disabled = state.busy;
+      refreshRecordsButton.disabled = state.busy;
+      newButton.disabled = state.busy;
+    }
+
+    async function refreshSources() {
+      const data = await request("/api/runs");
+      state.sources = (data.runs ?? []).filter(run =>
+        run.kind === "md_transport" || run.kind === "kinetics");
+      populateSourceSelect(transportSelect, "md_transport");
+      populateSourceSelect(kineticsSelect, "kinetics");
+      await loadSourceSelection();
+    }
+
+    async function refreshRecords() {
+      try {
+        const data = await request("/api/engineering");
+        state.records = Array.isArray(data) ? data : (data.records ?? data.items ?? []);
+        state.endpoint = true;
+        renderRecords();
+        syncButtons();
+      } catch (error) {
+        state.endpoint = error.status !== 404;
+        renderRecords();
+        syncButtons();
+        throw error;
+      }
+    }
+
+    async function refreshAll() {
+      if (state.busy) return;
+      state.busy = true;
+      syncButtons();
+      setStatus(status, "正在读取项目来源与工程工况…");
+      try {
+        await Promise.all([refreshSources(), refreshRecords()]);
+        setStatus(status, "");
+      } catch (error) {
+        setStatus(status, error.status === 404
+          ? "工程工况 API 尚未启用；来源仍可查看。"
+          : "工程工况工作台读取失败：" + error.message, error.status !== 404);
+      } finally {
+        state.busy = false;
+        syncButtons();
+      }
+    }
+
+    async function openRecord(id, button) {
+      if (!id) return;
+      state.busy = true;
+      syncButtons();
+      setStatus(status, "正在打开工程工况记录…");
+      try {
+        const record = await request("/api/engineering/" + encodeURIComponent(id));
+        const data = recordData(record);
+        state.current = record;
+        nameField.value = first(data.name, record.name) ?? "";
+        conditionIdField.value = first(data.condition_id, record.condition_id) ?? "";
+        const sources = recordSources(record, data);
+        const transportId = first(data.transport?.source_run_id, sources.transport?.run_id,
+          sources.transport?.source_run_id);
+        const kineticsId = first(data.kinetics?.source_run_id, sources.kinetics?.run_id,
+          sources.kinetics?.source_run_id);
+        transportSelect.value = transportId ?? "";
+        kineticsSelect.value = kineticsId ?? "";
+        conditionsField.value = jsonText(data.conditions);
+        await loadSourceSelection();
+        const windows = data.windows ?? {};
+        if (data.transport?.window != null || windows.transport != null) {
+          transportWindowField.value = jsonText(data.transport?.window ?? windows.transport);
+        }
+        if (data.kinetics?.window != null || windows.kinetics != null) {
+          kineticsWindowField.value = jsonText(data.kinetics?.window ?? windows.kinetics);
+        }
+        renderCurrent(record);
+        renderSources();
+        renderRecords();
+        recordList.querySelectorAll("button").forEach(item =>
+          item.removeAttribute("aria-current"));
+        button.setAttribute("aria-current", "true");
+        setStatus(status, "已打开工程工况记录；来源结果保持可追溯。");
+      } catch (error) {
+        setStatus(status, "打开工程工况失败：" + error.message, true);
+      } finally {
+        state.busy = false;
+        syncButtons();
+      }
+    }
+
+    async function saveRecord(event) {
+      event.preventDefault();
+      if (save.disabled) return;
+      state.busy = true;
+      syncButtons();
+      setStatus(status, "正在保存工程工况引用…");
+      try {
+        const payload = payloadFromForm();
+        const record = await request("/api/engineering", JSON.stringify(payload), undefined, jsonHeaders);
+        state.current = record;
+        await refreshRecords();
+        renderCurrent(record);
+        renderSources();
+        setStatus(status, "工程工况已保存，可从记录列表重开。");
+      } catch (error) {
+        setStatus(status, "保存工程工况失败：" + error.message, true);
+      } finally {
+        state.busy = false;
+        syncButtons();
+      }
+    }
+
+    async function exportRecord() {
+      const id = recordId(state.current);
+      if (!id || exportButton.disabled) return;
+      state.busy = true;
+      syncButtons();
+      setStatus(status, "正在导出工程工况记录…");
+      try {
+        const data = recordData(state.current);
+        const url = first(state.current.export_url, data.export_url, data.links?.export)
+          ?? "/api/engineering/" + encodeURIComponent(id) + "/export";
+        const response = await fetch(projectPath(url), { cache: "no-store", signal });
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.error ?? "HTTP " + response.status);
+        }
+        const blob = await response.blob();
+        const link = element("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "engineering-" + id + ".json";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+        setStatus(status, "工程工况记录已导出。");
+      } catch (error) {
+        if (!signal?.aborted) setStatus(status, "导出工程工况失败：" + error.message, true);
+      } finally {
+        state.busy = false;
+        syncButtons();
+      }
+    }
+
+    function clearForm() {
+      state.current = null;
+      form.reset();
+      transportSelect.value = "";
+      kineticsSelect.value = "";
+      sourceSummary.replaceChildren(element("p", "请选择已有 MD 输运物性和/或动力学拟合结果。", "ca-muted"));
+      renderCurrent(null);
+      renderRecords();
+      setStatus(status, "已准备新工程工况；请选择已有结果并确认工况窗口。");
+      syncButtons();
+    }
+
+    transportSelect.addEventListener("change", () => void loadSourceSelection());
+    kineticsSelect.addEventListener("change", () => void loadSourceSelection());
+    form.addEventListener("submit", saveRecord);
+    exportButton.addEventListener("click", () => void exportRecord());
+    refreshSourcesButton.addEventListener("click", () => void refreshAll());
+    refreshRecordsButton.addEventListener("click", () => void refreshRecords().catch(error =>
+      setStatus(status, error.status === 404 ? "工程工况 API 尚未启用。" : error.message, error.status !== 404)));
+    newButton.addEventListener("click", clearForm);
+    panel.addEventListener("toggle", () => { if (panel.open) void refreshAll(); }, { signal });
+    if (panel.open) void refreshAll();
+    syncButtons();
+  }
+
+
   function mountWorkspace(panel, workbench, request, signal) {
     const find = selector => workbench.querySelector(selector);
     const handoff = find("#md-handoff-form");
@@ -2568,6 +3257,7 @@ function renderMdAnalysis(run, target) {
       }
     }
 
+    mountEngineering(find, panel, request, signal, workbench.dataset.role, openRun);
     async function loadHistory() {
       const version = ++manifestVersion;
       const message = find("#analysis-history-status");

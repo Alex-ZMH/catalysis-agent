@@ -164,3 +164,30 @@
 #studio .ca-transport-driving-result :is(h5, h6) { margin: 0 0 7px; }
 #studio .ca-transport-driving-result h6:not(:first-child) { margin-top: 14px; }
 @media (max-width: 900px) { #studio .ca-driving-grid { grid-template-columns: minmax(0, 1fr); } }
+#studio .ca-engineering-workbench {
+  margin-top: 18px;
+  padding: 14px 16px 16px;
+  border-inline-start: 3px solid #8ab4f8;
+  background: var(--wb-sidebar);
+}
+#studio .ca-engineering-lede { max-width: 72rem; }
+#studio .ca-engineering-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+#studio .ca-engineering-source-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--wb-line);
+  border-inline-start: 3px solid var(--wb-accent);
+  background: var(--wb-panel);
+}
+#studio .ca-engineering-source-card h4 { margin: 0 0 8px; }
+#studio .ca-engineering-source-card .ca-metrics { margin: 8px 0; }
+#studio .ca-engineering-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
