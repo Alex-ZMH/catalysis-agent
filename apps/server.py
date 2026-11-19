@@ -220,6 +220,9 @@ def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, uploa
             or plan.get("job_id") != job_id
             or spec.get("workflow") != "md-lammps" or spec.get("mode") != "slurm-md"):
         raise ValueError("计划 ID、job ID 或计划类型与实际项目记录不一致。")
+    plan_origin = spec.get("origin")
+    if plan_origin not in {"synthetic", "research"}:
+        raise ValueError("授权计划的实际数据来源无效，无法导入项目运行。")
     outputs = _transport_plan_outputs(plan)
     if not outputs:
         raise ValueError("授权计划未声明 transport_sampling 输出。")
@@ -259,7 +262,7 @@ def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, uploa
     execution = {"plan_id": plan_id, "job_id": job_id, "source_files": source_files,
                  "verified": True,
                  "verification_reason": "服务端从当前项目授权计划工件读取"}
-    return (normalized_options, sources, {"metadata": metadata, "execution": execution})
+    return (normalized_options, sources, {"metadata": metadata, "execution": execution}, plan_origin)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -707,7 +710,7 @@ class Handler(BaseHTTPRequestHandler):
                 plan_id, job_id = fields.get("transport_plan_id"), fields.get("transport_job_id")
                 if not plan_id or not job_id:
                     raise ValueError("自动输运采集需要 plan ID 和 job ID。")
-                options, collected, transport_verification = resolve_plan_transport(
+                options, collected, transport_verification, plan_origin = resolve_plan_transport(
                     self.approvals, self.approvals.md_scheduler, plan_id, job_id,
                     fields["options"], self.server.upload_limit)
                 primary_role = options["transport_primary_role"]
@@ -716,6 +719,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("授权计划没有可读取的主输运工件。")
                 name, blob = primary
                 fields["options"] = options
+                fields["origin"] = plan_origin
                 transport_files = collected
                 transport_fields = {"transport_plan_id": plan_id, "transport_job_id": job_id}
             else:
