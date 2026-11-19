@@ -344,8 +344,11 @@ function renderMdAnalysis(run, target) {
     if (execution.plan_id || execution.job_id) {
     const verification = execution.verified === true ? "已核验"
       : `未核验${execution.verification_reason ? `：${execution.verification_reason}` : ""}`;
+    const originVerification = execution.origin_verified === true ? "计划记录"
+      : execution.origin_source === "user" ? "用户声明（计划未记录）" : "未核验";
       section.append(metrics([["来源 plan ID", execution.plan_id], ["来源 Slurm job ID", execution.job_id],
       ["服务端来源核验", verification],
+      ["项目数据来源", `${run.origin ?? "未指定"} · ${originVerification}`],
         ["原始来源文件", execution.source_files?.join(" · ")]]));
     }
     const unit = result.units ?? {};

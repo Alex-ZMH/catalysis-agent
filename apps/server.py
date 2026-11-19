@@ -207,7 +207,8 @@ def resolve_uploaded_transport(approvals, filename, content, options, transport_
     return {"metadata": metadata, "execution": execution}
 
 
-def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, upload_limit):
+def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, upload_limit,
+                           declared_origin=None):
     """Read native transport outputs from the authorized project's plan spool."""
     if approvals is None or scheduler is None:
         raise ValueError("当前项目未配置可读取 Slurm 工件的计划存储。")
@@ -221,7 +222,13 @@ def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, uploa
             or spec.get("workflow") != "md-lammps" or spec.get("mode") != "slurm-md"):
         raise ValueError("计划 ID、job ID 或计划类型与实际项目记录不一致。")
     plan_origin = spec.get("origin")
-    if plan_origin not in {"synthetic", "research"}:
+    if plan_origin in {"synthetic", "research"}:
+        resolved_origin, origin_verified, origin_source = plan_origin, True, "plan"
+    elif plan_origin == "unknown":
+        if declared_origin not in {"synthetic", "research"}:
+            raise ValueError("计划未记录数据来源；请明确声明 synthetic 或 research。")
+        resolved_origin, origin_verified, origin_source = declared_origin, False, "user"
+    else:
         raise ValueError("授权计划的实际数据来源无效，无法导入项目运行。")
     outputs = _transport_plan_outputs(plan)
     if not outputs:
@@ -261,8 +268,9 @@ def resolve_plan_transport(approvals, scheduler, plan_id, job_id, options, uploa
     source_files = sorted(pair[0] for pair in sources.values())
     execution = {"plan_id": plan_id, "job_id": job_id, "source_files": source_files,
                  "verified": True,
-                 "verification_reason": "服务端从当前项目授权计划工件读取"}
-    return (normalized_options, sources, {"metadata": metadata, "execution": execution}, plan_origin)
+                 "verification_reason": "服务端从当前项目授权计划工件读取",
+                 "origin_verified": origin_verified, "origin_source": origin_source}
+    return (normalized_options, sources, {"metadata": metadata, "execution": execution}, resolved_origin)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -712,7 +720,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("自动输运采集需要 plan ID 和 job ID。")
                 options, collected, transport_verification, plan_origin = resolve_plan_transport(
                     self.approvals, self.approvals.md_scheduler, plan_id, job_id,
-                    fields["options"], self.server.upload_limit)
+                    fields["options"], self.server.upload_limit, fields.get("origin"))
                 primary_role = options["transport_primary_role"]
                 primary = collected.pop("transport_" + primary_role, None)
                 if primary is None:

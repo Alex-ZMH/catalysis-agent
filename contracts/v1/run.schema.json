@@ -32,6 +32,8 @@
         "job_id": {"$ref": "#/$defs/externalId"},
         "verified": {"type": "boolean"},
         "verification_reason": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin_verified": {"type": "boolean"},
+        "origin_source": {"enum": ["plan", "user"]},
         "source_files": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "pattern": "^[^\\\\/\\u0000-\\u001f]+$"}},
         "sources": {
           "type": "array", "minItems": 1,

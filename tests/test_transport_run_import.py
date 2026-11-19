@@ -136,7 +136,7 @@ class TransportRunImportTests(unittest.TestCase):
     def test_authorized_plan_artifacts_can_be_collected_server_side(self):
         plan = {
             "id": "plan-transport-01", "state": "submitted", "job_id": "1023_7",
-            "spec": {"workflow": "md-lammps", "mode": "slurm-md", "origin": "synthetic", "config": {
+            "spec": {"workflow": "md-lammps", "mode": "slurm-md", "origin": "unknown", "config": {
                 "transport_sampling": {"enabled": True, "channels": ["heat_profile", "heat_global"],
                                         "fields": ["temperature"], "outputs": {
                                             "profile": "transport_profile.dat",
@@ -163,19 +163,24 @@ class TransportRunImportTests(unittest.TestCase):
         options = {"mode": "conductivity", "columns": {"position": "Coord1", "field": "temp", "flux": "v_q"},
                    "units": {"position": "angstrom", "field": "K", "flux": "eV/(angstrom^2*ps)"}}
         normalized, files, verification, plan_origin = resolve_plan_transport(
-            Approvals(), Scheduler(), plan["id"], plan["job_id"], options, 8 * 1024 * 1024)
+            Approvals(), Scheduler(), plan["id"], plan["job_id"], options, 8 * 1024 * 1024,
+            declared_origin="synthetic")
         self.assertEqual(plan_origin, "synthetic")
+        self.assertFalse(verification["execution"]["origin_verified"])
+        self.assertEqual(verification["execution"]["origin_source"], "user")
         self.assertTrue(verification["execution"]["verified"])
         self.assertIn("transport_plan", files)
         primary = files.pop("transport_profile")
         with tempfile.TemporaryDirectory() as folder:
             store = Workspace(folder, "project", "analyst", "1" * 40)
-            view = store.analyze("md_transport", *primary, normalized, "research",
+            view = store.analyze("md_transport", *primary, normalized, plan_origin,
                                  transport_files=files,
                                  transport_fields={"transport_plan_id": plan["id"],
                                                    "transport_job_id": plan["job_id"]},
                                  transport_verification=verification)
             self.assertTrue(view["execution"]["verified"])
+            self.assertEqual(view["origin"], "synthetic")
+            self.assertFalse(view["execution"]["origin_verified"])
             self.assertIn("plan", view["raw_ids"])
             validate_run(store.manifest(view["id"]))
 
