@@ -15,6 +15,7 @@ import stat
 import warnings
 from threading import BoundedSemaphore, Lock
 from time import monotonic
+from packages.agent.zeus_identity import IdentityUnavailable
 
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}")
@@ -34,6 +35,9 @@ _SESSION_LIMIT = 1024
 
 class RateLimitError(RuntimeError):
     """The caller may retry authentication later."""
+
+
+_PHONE = re.compile(r"(?:\+[1-9][0-9]{7,14}|[1-9][0-9]{7,14})")
 
 
 def _password_bytes(password):
@@ -112,34 +116,59 @@ def _read_policy(path):
         raise ValueError("Expected an access policy with a users object")
     users = {}
     for username, entry in document["users"].items():
-        if not _ID.fullmatch(username) or not isinstance(entry, dict) or entry.keys() != {
-            "password_hash", "projects"
-        }:
+        if (not isinstance(username, str) or not _ID.fullmatch(username)
+                or not isinstance(entry, dict)):
             raise ValueError("Invalid access policy user")
-        verifier = entry["password_hash"]
-        match = _VERIFIER.fullmatch(verifier) if isinstance(verifier, str) else None
-        projects = entry["projects"]
-        if match is None or not isinstance(projects, dict) or any(
-            not _ID.fullmatch(project) or not isinstance(role, str) or role not in _ROLES
-            for project, role in projects.items()
-        ):
-            raise ValueError("Invalid password verifier or project role")
-        users[username] = (bytes.fromhex(match[1]), bytes.fromhex(match[2]), projects)
+        projects = entry.get("projects")
+        if (not isinstance(projects, dict) or any(
+                not _ID.fullmatch(project) or not isinstance(role, str) or role not in _ROLES
+                for project, role in projects.items())):
+            raise ValueError("Invalid project role")
+        if entry.keys() == {"password_hash", "projects"}:
+            verifier = entry["password_hash"]
+            match = _VERIFIER.fullmatch(verifier) if isinstance(verifier, str) else None
+            if match is None:
+                raise ValueError("Invalid password verifier")
+            users[username] = _User(projects=projects,
+                                     password_salt=bytes.fromhex(match[1]),
+                                     password_verifier=bytes.fromhex(match[2]))
+        elif entry.keys() == {"zeus_subject", "projects"}:
+            # A Zeus grant is deliberately explicit and must be keyed by the
+            # account's phone number.  In particular, a stable subject alone
+            # never creates or claims a local account.
+            subject = entry["zeus_subject"]
+            if (not _PHONE.fullmatch(username) or not isinstance(subject, str)
+                    or not _ID.fullmatch(subject)):
+                raise ValueError("Invalid Zeus identity grant")
+            users[username] = _User(projects=projects, zeus_subject=subject)
+        else:
+            raise ValueError("Invalid access policy user")
     return users, before
+
+
+@dataclass(frozen=True)
+class _User:
+    projects: dict
+    password_salt: bytes = None
+    password_verifier: bytes = None
+    zeus_subject: str = None
 
 
 @dataclass(frozen=True)
 class _Session:
     actor: str
     expires: float
+    zeus_bearer: str = None
+    zeus_subject: str = None
 
 
 class AccessPolicy:
     """Authenticate users and issue expiring sessions scoped to this instance."""
 
-    def __init__(self, path):
+    def __init__(self, path, zeus_auth=None):
         self._path = Path(path).absolute()
         self._users, self._version = _read_policy(self._path)
+        self._zeus = self._resolve_zeus(zeus_auth)
         self._disabled = False
         self._lock = Lock()
         self._hash_slots = BoundedSemaphore(_HASH_SLOTS)
@@ -148,6 +177,22 @@ class AccessPolicy:
         self._sessions = {}
         self._dummy_salt = secrets.token_bytes(16)
         self._dummy_hash = secrets.token_bytes(32)
+        self._closed = False
+
+    @staticmethod
+    def _resolve_zeus(zeus_auth):
+        if zeus_auth is None or zeus_auth is False:
+            return None
+        if zeus_auth is not True:
+            return zeus_auth
+        try:
+            from packages.agent.zeus_identity import ZeusIdentity
+        except (ImportError, AttributeError) as error:
+            raise IdentityUnavailable("Zeus 身份服务不可用。") from error
+        try:
+            return ZeusIdentity()
+        except (ConnectionError, OSError, TimeoutError) as error:
+            raise IdentityUnavailable("Zeus 身份服务不可用。") from error
 
     def _current(self):
         # Called with the lock held. A changed or inaccessible policy revokes
@@ -186,14 +231,77 @@ class AccessPolicy:
 
     def _prune_sessions(self, now):
         # All sessions have the same TTL and are inserted under the lock.
+        expired = []
         while self._sessions:
             token, oldest = next(iter(self._sessions.items()))
             if oldest.expires > now:
                 break
             del self._sessions[token]
+            if oldest.zeus_bearer:
+                expired.append(oldest.zeus_bearer)
+        return expired
+
+    @staticmethod
+    def _identity_call(broker, method, *args):
+        try:
+            value = getattr(broker, method)(*args)
+        except IdentityUnavailable:
+            raise
+        except (AttributeError, ConnectionError, OSError, TimeoutError) as error:
+            raise IdentityUnavailable("Zeus 身份服务暂时不可用。") from error
+        return value
+
+    def _broker_logout(self, bearer, *, best_effort=False):
+        if not bearer or self._zeus is None:
+            return
+        try:
+            self._identity_call(self._zeus, "logout", bearer)
+        except IdentityUnavailable:
+            if not best_effort:
+                raise
+
+    def _finish_zeus_login(self, username, password, user):
+        if self._zeus is None:
+            # No local password verifier is accepted for a Zeus grant.  A
+            # missing/disabled broker is an availability failure, never a
+            # reason to fall back to a password hash or phone-number match.
+            raise IdentityUnavailable("Zeus 身份服务未启用。")
+        result = self._identity_call(self._zeus, "login", username, password)
+        if result is None:
+            return None
+        if (not isinstance(result, tuple) or len(result) != 2
+                or not isinstance(result[0], str) or not isinstance(result[1], str)
+                or not result[0] or not result[1]):
+            raise IdentityUnavailable("Zeus 身份服务返回了无效会话。")
+        subject, bearer = result
+        if subject != user.zeus_subject:
+            # Do not grant access merely because the phone/password was
+            # accepted by an account whose stable subject is different.
+            self._broker_logout(bearer, best_effort=True)
+            return None
+        with self._lock:
+            if not self._current():
+                current = False
+                expired = []
+            else:
+                current = True
+                expired = self._prune_sessions(monotonic())
+                if len(self._sessions) >= _SESSION_LIMIT:
+                    evicted = self._sessions.pop(next(iter(self._sessions)))
+                    if evicted.zeus_bearer:
+                        expired.append(evicted.zeus_bearer)
+                token = "sess-" + secrets.token_urlsafe(32)
+                self._sessions[token] = _Session(
+                    username, monotonic() + _SESSION_TTL, bearer, subject)
+        for old_bearer in expired:
+            self._broker_logout(old_bearer, best_effort=True)
+        if not current:
+            self._broker_logout(bearer, best_effort=True)
+            return None
+        return token
 
     def login(self, username, password):
-        if not isinstance(username, str) or len(username) > 96 or not _ID.fullmatch(username):
+        if (not isinstance(username, str) or len(username) > 96 or not _ID.fullmatch(username)):
             return None
         try:
             encoded = _password_bytes(password)
@@ -203,9 +311,15 @@ class AccessPolicy:
             if not self._current():
                 return None
             self._reserve_attempt(username, monotonic())
-        try:
             user = self._users.get(username)
-            salt, verifier = user[:2] if user is not None else (self._dummy_salt, self._dummy_hash)
+        if user is not None and user.zeus_subject is not None:
+            # The semaphore is an anti-DoS bound for local PBKDF work.  Do
+            # not hold a slot or policy lock while calling the remote broker.
+            self._hash_slots.release()
+            return self._finish_zeus_login(username, password, user)
+        try:
+            salt, verifier = ((user.password_salt, user.password_verifier)
+                              if user is not None else (self._dummy_salt, self._dummy_hash))
             valid = secrets.compare_digest(_derive(encoded, salt), verifier)
         finally:
             self._hash_slots.release()
@@ -215,12 +329,16 @@ class AccessPolicy:
             if not self._current():
                 return None
             now = monotonic()
-            self._prune_sessions(now)
+            expired = self._prune_sessions(now)
             if len(self._sessions) >= _SESSION_LIMIT:
-                del self._sessions[next(iter(self._sessions))]
+                evicted = self._sessions.pop(next(iter(self._sessions)))
+                if evicted.zeus_bearer:
+                    expired.append(evicted.zeus_bearer)
             token = "sess-" + secrets.token_urlsafe(32)
             self._sessions[token] = _Session(username, now + _SESSION_TTL)
-            return token
+        for bearer in expired:
+            self._broker_logout(bearer, best_effort=True)
+        return token
 
     def actor(self, token):
         if not isinstance(token, str) or not _TOKEN.fullmatch(token):
@@ -228,14 +346,59 @@ class AccessPolicy:
         with self._lock:
             if not self._current():
                 return None
-            self._prune_sessions(monotonic())
+            expired = self._prune_sessions(monotonic())
             session = self._sessions.get(token)
-            return session.actor if session else None
+        for bearer in expired:
+            self._broker_logout(bearer, best_effort=True)
+        if session is None:
+            return None
+        if session.zeus_bearer:
+            if self._zeus is None:
+                raise IdentityUnavailable("Zeus 身份服务未启用。")
+            subject = self._identity_call(self._zeus, "session_subject", session.zeus_bearer)
+            if subject is not None and not isinstance(subject, str):
+                raise IdentityUnavailable("Zeus 身份服务返回了无效会话。")
+            if subject != session.zeus_subject:
+                with self._lock:
+                    if self._sessions.get(token) == session:
+                        self._sessions.pop(token, None)
+                return None
+            # Logout may race with a session check.  Do not let a stale
+            # validation resurrect a token removed in the meantime.
+            with self._lock:
+                return session.actor if self._sessions.get(token) == session else None
+        return session.actor
 
     def logout(self, token):
-        if isinstance(token, str):
-            with self._lock:
-                self._sessions.pop(token, None)
+        if not isinstance(token, str):
+            return
+        with self._lock:
+            expired = self._prune_sessions(monotonic())
+            session = self._sessions.pop(token, None)
+            if session is not None and session.zeus_bearer:
+                expired.append(session.zeus_bearer)
+        for bearer in expired:
+            self._broker_logout(bearer)
+
+    def close(self):
+        """Revoke local sessions and close the optional broker outside the lock."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+            broker = self._zeus
+        if broker is not None:
+            for session in sessions:
+                if session.zeus_bearer:
+                    self._broker_logout(session.zeus_bearer, best_effort=True)
+            close = getattr(broker, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except (ConnectionError, OSError, TimeoutError):
+                    pass
 
     def projects(self, actor):
         """Return a detached role mapping for a previously authenticated actor."""
@@ -243,7 +406,7 @@ class AccessPolicy:
             return {}
         with self._lock:
             user = self._users.get(actor) if self._current() else None
-            return dict(user[2]) if user is not None else {}
+            return dict(user.projects) if user is not None else {}
 
 
 def _audit_value(value):

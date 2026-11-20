@@ -25,6 +25,7 @@ from packages.agent.approvals import ApprovalStore, RestoredApprovalError
 from packages.agent.egress import restrict_egress
 from packages.agent.md_slurm import MDSlurm, SchedulerUnavailable, SlurmBroker
 from packages.agent.model_broker import ModelBroker, ModelUnavailable
+from packages.agent.zeus_identity import IdentityUnavailable
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import (Workspace, build_transport_inputs, json_bytes,
                                       read_transport_metadata)
@@ -382,6 +383,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._post(path)
             else:
                 self._get(path)
+        except IdentityUnavailable:
+            # The broker deliberately keeps network and credential details
+            # out of its exception text.  Keep the HTTP surface generic too.
+            self._send(503, json_bytes({"error": "身份服务暂不可用。"}))
         except ModelUnavailable as error:
             self._send(503, json_bytes({"error": str(error)[:800]}))
         except SchedulerUnavailable as error:
@@ -455,9 +460,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/logout":
             if body:
                 raise ValueError("退出请求不接受额外参数。")
+            # Clear the browser cookie even when the upstream Zeus session
+            # is temporarily unavailable; the local session is removed first
+            # by AccessPolicy and the client must not keep retrying it.
+            self.session_cookie = COOKIE_NAME + "=; Max-Age=0" + flags
             if token:
                 access.logout(token)
-            self.session_cookie = COOKIE_NAME + "=; Max-Age=0" + flags
             self._session(None)
             return
         if (set(body) != {"username", "password"}
@@ -938,6 +946,8 @@ class WorkbenchServer(ThreadingHTTPServer):
                 self.model_broker.close()
             super().server_close()
         finally:
+            if getattr(self, "access", None) is not None:
+                self.access.close()
             if self.md_broker is not None:
                 self.md_broker.close()
                 self.md_broker = None
@@ -945,7 +955,7 @@ class WorkbenchServer(ThreadingHTTPServer):
 
 def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
                 synthetic_submission=False, *, access_policy=None, audit_log=None, backup_root=None,
-                md_slurm_config=None):
+                md_slurm_config=None, zeus_auth=None):
     if min(max_upload_mib, workers) <= 0:
         raise ValueError("Limits must be positive")
     data_dir = Path(data_dir).expanduser().absolute()
@@ -966,11 +976,13 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
             raise ValueError("Keep policy, audit and archive data outside the project tree")
         if len({path.resolve() for path in managed_paths}) != len(managed_paths):
             raise ValueError("Use separate locations for policy, audit and archive data")
-        access, audit, backups = AccessPolicy(managed_paths[0]), AuditLog(managed_paths[1]), ProjectBackups(managed_paths[2])
+        access, audit, backups = (AccessPolicy(managed_paths[0], zeus_auth=zeus_auth),
+                                  AuditLog(managed_paths[1]), ProjectBackups(managed_paths[2]))
     mark_managed(data_dir, managed)
     assets = static_files()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     server = WorkbenchServer(("127.0.0.1", port), Handler)
+    server.access = access
     try:
         if md_slurm_config is not None:
             server.md_broker = SlurmBroker(data_dir, md_slurm_config)
@@ -1007,12 +1019,14 @@ def main():
     parser.add_argument("--access-policy", type=Path)
     parser.add_argument("--audit-log", type=Path)
     parser.add_argument("--backup-root", type=Path)
+    parser.add_argument("--zeus-auth", action="store_true",
+                        help="Enable the explicitly configured Zeus identity broker")
     parser.add_argument("--mlcc-model-config", type=Path, help="Enable the explicitly authorized MLCC model bridge")
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
                      args.max_upload_mib, args.workers, args.a6_synthetic_slurm,
                      access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root,
-                     md_slurm_config=args.md_slurm_config) as server:
+                     md_slurm_config=args.md_slurm_config, zeus_auth=args.zeus_auth) as server:
         if args.mlcc_model_config is not None:
             server.model_broker = ModelBroker(args.mlcc_model_config)
         if server.access is not None:
