@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const Kb = 8.617333262e-5;
-  const assumptions = '固定电位、温区内 ΔG‡ 与传输系数近似不变，单一基元步，界面传质不构成限制。';
+  const assumptions = '固定电位，单一基元步受动力学控制，温区内 ΔG‡ 与传输系数近似恒定。';
   const reactions = {
     her: { label: 'HER · 阴极析氢', steps: [
       { name: 'Volmer · 氢吸附', equation: '* + H⁺ + e⁻ → H*', barrier: .38, delta: -.12 },
@@ -27,11 +27,11 @@
           <h2>升高温度，<br>基元反应能快多少？</h2>
           <p class="catalysis-lab-lede">在统一的温度参照下，观察一个基元步的活化自由能如何改变相对反应速率。</p>
           <div class="catalysis-lab-formula">k ∝ T · exp(−ΔG‡ / k<sub>B</sub>T)</div>
-          <p>ΔG‡ 为过渡态与初态的自由能差。这里的相对速率仅用于比较当前教学模型中的温度与能垒，不等同于实测电流或法拉第效率。</p>
-          <p><strong>适用边界</strong> · ${assumptions}</p>
+          <p>ΔG‡ 为过渡态与初态的自由能差。相对速率以 298 K 时的速率为基准。</p>
+          <p><strong>模型条件</strong> · ${assumptions}</p>
         </div>
         <div class="catalysis-lab-panel">
-          <div class="catalysis-lab-heading"><span>基元步参数探索</span><small>教学示意</small></div>
+          <div class="catalysis-lab-heading"><span>基元步参数探索</span><small>示例参数</small></div>
           <div class="catalysis-lab-switch" role="group" aria-label="选择反应"><button type="button" data-reaction="her" aria-pressed="true">HER / 阴极</button><button type="button" data-reaction="oer" aria-pressed="false">OER / 阳极</button></div>
           <div class="catalysis-lab-steps" role="group" aria-label="选择基元步"></div>
           <div class="catalysis-lab-readout"><output><span data-rate></span><span>×</span></output><small>相对速率（298 K = 1）</small></div>
@@ -87,7 +87,7 @@
     temperatureInput.addEventListener('input', update);
     root.querySelector('.catalysis-lab-action').addEventListener('click', () => {
       const item = current();
-      openDraft?.(`以${reactions[reactionId].label}的“${item.name}”为研究对象。当前教学设定：T = ${temperatureInput.value} K，ΔG‡ = ${item.barrier.toFixed(2)} eV，ΔG = ${item.delta.toFixed(2)} eV，相对速率 = ${rateOutput.textContent}×（298 K = 1）。模型假设：${assumptions}\n请把该基元步放入完整的电化学研究流程，补充电位、pH、溶剂化、覆盖度和输运检查，并列出验证条件。仅做研究规划。`);
+      openDraft?.(`以${reactions[reactionId].label}的“${item.name}”为研究对象。当前参数：T = ${temperatureInput.value} K，ΔG‡ = ${item.barrier.toFixed(2)} eV，ΔG = ${item.delta.toFixed(2)} eV，相对速率 = ${rateOutput.textContent}×（298 K = 1）。模型假设：${assumptions}\n请据此设计研究步骤，并说明电位、pH、溶剂化、覆盖度和输运条件的设置。`);
     });
     renderSteps(); update();
   }

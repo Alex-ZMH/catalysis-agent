@@ -35,7 +35,6 @@
             <span aria-hidden="true">☰</span>
           </button>
           <strong>电化学研究助手</strong>
-          <span class="wb-mode">本地草案模式</span>
         </header>
         <div class="wb-stage">
           <div class="wb-content">
@@ -47,7 +46,7 @@
             <form class="wb-composer">
               <textarea rows="3" aria-label="研究问题" placeholder="输入研究问题，或描述你想验证的假设…"></textarea>
               <div class="wb-actions">
-                <p role="status" class="wb-status">草案仅保存在当前浏览器。</p>
+                <p role="status" class="wb-status"></p>
                 <button type="submit" class="wb-save" disabled>保存为本地草案</button>
               </div>
             </form>
@@ -79,7 +78,7 @@
       menu.setAttribute("aria-expanded", String(drawerOpen));
     }
 
-    function updateComposer(message = "草案仅保存在当前浏览器。") {
+    function updateComposer(message = "") {
       status.textContent = message;
       save.disabled = !input.value.trim();
       save.textContent = activeId ? "更新本地草案" : "保存为本地草案";

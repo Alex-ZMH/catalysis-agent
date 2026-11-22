@@ -10,8 +10,8 @@
       question: "如何比较海水电解中的候选活性位？",
       steps: [
         [
-          "先校核体相",
-          "弛豫无真空的催化剂体相，保留电子自洽、结构收敛与磁性设置的证据。",
+          "弛豫体相",
+          "弛豫无真空的体相结构，记录磁性设置和收敛结果。",
         ],
         [
           "建立表面位点",
@@ -26,8 +26,6 @@
         "体相结构、晶面与终止、Pt/IrO₂ 候选位点、覆盖度、气相参考与收敛阈值。",
       output:
         "表面结构、差分电荷密度、Bader/积分电荷对照、位点吸附构型与统一参考下的吸附能。",
-      boundary:
-        "电荷等值面用于定位界面重排，不能单独当作净电子转移量。位点排序会随终止、覆盖度、电位和参考态改变。",
       formulas: [
         [
           "差分电荷密度",
@@ -54,14 +52,12 @@
         ],
         [
           "比较能垒",
-          "在每一对同条件端点之间搜索过渡态，分别记录 ΔG‡ 与 ΔG，不能用静态初末态差代替活化能。",
+          "搜索过渡态。它与初态的自由能差为 ΔG‡，终态与初态的自由能差为 ΔG。",
         ],
       ],
       input: "弛豫后的 Pt 表面、H⁺ 活度、电位、溶剂模型、反应端点与路径初猜。",
       output:
         "H* 构型、差分电荷密度、电子转移方向、自由能剖面、分步 ΔG‡ 与适用条件。",
-      boundary:
-        "曲线横轴是反应坐标。过渡态与起始中间体的自由能差才是该步的活化自由能。",
       formulas: [
         [
           "Volmer 步",
@@ -76,7 +72,7 @@
         [
           "反应能垒",
           "ΔG‡ = G_TS − G_initial；ΔG = G_final − G_initial",
-          "ΔG 描述热力学，ΔG‡ 描述动力学。两者需要分别报告。",
+          "ΔG 表示反应自由能，ΔG‡ 表示活化自由能。",
         ],
       ],
     },
@@ -94,8 +90,6 @@
       input: "弛豫后的 IrO₂ 表面、*OH/*O/*OOH 端点、电位、pH、溶剂与氧气参考。",
       output:
         "吸附物演化结构、O–O 键形成路径、阳极电子抽取方向、分步 ΔG‡ 与选择性边界。",
-      boundary:
-        "真实海水还会引入 Cl⁻ 氧化竞争。直接海水条件下需要同时测量 O₂ 与活性氯产物。",
       formulas: [
         [
           "吸附物演化",
@@ -133,8 +127,6 @@
       input:
         "膜电极组件、纯化水流量、阳/阴极催化层、电位、电流密度和含氯海水边界。",
       output: "PEM 剖面、H⁺ 与 e⁻ 两条传递路径、H₂/O₂ 产物侧与析氯风险说明。",
-      boundary:
-        "剖面是机理示意，不替代膜厚、阻抗、两相流、物料衡算或耐久性实测。",
       formulas: [
         [
           "阳极半反应",
@@ -261,8 +253,8 @@
     ).join('');
     return `<div class="ec-visual"><img src="public/scenes/${state.image}" alt="${state.alt}"><div class="ec-visual-tag">${electrode} · ${state.label}</div></div>
       <div class="ec-step-grid" role="group" aria-label="${electrode} 基元步骤">${cards}</div>
-      ${plot('相对自由能 G / eV', '反应坐标 →', energyPath(state), state.label + '，初态、过渡态和终态的教学自由能剖面')}
-      <figcaption>${state.copy} 自由能取教学设定值，以本步初态为零。</figcaption>`;
+      ${plot('相对自由能 G / eV', '反应坐标 →', energyPath(state), state.label + '，初态、过渡态和终态的示例自由能剖面')}
+      <figcaption>${state.copy} 示例曲线以本步初态的自由能为零点。</figcaption>`;
   }
   function pemPlate(active) {
     const state = pemSteps[active];
@@ -272,10 +264,10 @@
           `<button type="button" data-view="${index}" aria-pressed="${index === active}"><strong>${item.label}</strong><small>${item.formula}</small></button>`,
       )
       .join("");
-    return `<div class="ec-visual ec-visual--device"><img src="public/scenes/pem.webp" alt="PEM 膜电极剖面，显示阳极、质子交换膜、阴极和外电路"><div class="ec-visual-tag">PEM / ${state.label}</div></div><div class="ec-step-grid ec-step-grid--pem" role="group" aria-label="PEM 传递步骤">${cards}</div><div class="ec-pem-note"><strong>${state.label}</strong><p>${state.copy}</p><span>边界条件 · 纯化水进阳极；直接含氯海水时并行记录 2Cl⁻ → Cl₂ + 2e⁻。</span></div><figcaption>PEM 装置图把微观电子转移映射到膜电极剖面。它是结构与路径示意，不替代膜阻抗、两相流与耐久性测量。</figcaption>`;
+    return `<div class="ec-visual ec-visual--device"><img src="public/scenes/pem.webp" alt="PEM 膜电极剖面，显示阳极、质子交换膜、阴极和外电路"><div class="ec-visual-tag">PEM / ${state.label}</div></div><div class="ec-step-grid ec-step-grid--pem" role="group" aria-label="PEM 传递步骤">${cards}</div><div class="ec-pem-note"><strong>${state.label}</strong><p>${state.copy}</p><span>边界条件 · 纯化水进阳极；直接含氯海水时并行记录 2Cl⁻ → Cl₂ + 2e⁻。</span></div><figcaption>质子穿过膜，电子经外电路到达阴极。</figcaption>`;
   }
   function sitePlate() {
-    return `<div class="ec-visual"><img src="public/scenes/site.webp" alt="催化剂表面活性位与差分电荷密度示意"><div class="ec-visual-tag">SURFACE / Δρ · charge rearrangement</div></div><div class="ec-charge-legend"><span><i class="is-positive"></i>电子积累</span><span><i class="is-negative"></i>电子耗尽</span><span><i class="is-site"></i>候选位点</span></div><figcaption>冰蓝与暖橙分别标出电子积累和电子耗尽。两组位点必须用同一网格、等值面阈值与参考态比较。</figcaption>`;
+    return `<div class="ec-visual"><img src="public/scenes/site.webp" alt="催化剂表面活性位与差分电荷密度示意"><div class="ec-visual-tag">SURFACE / Δρ · charge rearrangement</div></div><div class="ec-charge-legend"><span><i class="is-positive"></i>电子积累</span><span><i class="is-negative"></i>电子耗尽</span><span><i class="is-site"></i>候选位点</span></div><figcaption>冰蓝与暖橙分别标出电子积累和电子耗尽。等值面显示电荷重排的位置，分区积分给出转移电荷量。</figcaption>`;
   }
   function plate(id, view) {
     if (id === "site") return sitePlate();
@@ -336,7 +328,7 @@
       );
       if (restoreFocus) tabs[index].focus({ preventScroll: true });
       if (announce) status.textContent = `${item.scale}，${item.question}`;
-      body.innerHTML = `<article class="methods-question"><h3>${item.question}</h3><ol>${item.steps.map(([title, detail]) => `<li><strong>${title}</strong><p>${detail}</p></li>`).join("")}</ol><button type="button" class="methods-draft" data-action="draft">用这个问题开始研究 <span aria-hidden="true">↗</span></button><details><summary>公式与使用条件</summary>${item.formulas.map(([name, formula, condition]) => `<div class="methods-equation"><strong>${name}</strong><code>${formula}</code><p>${condition}</p></div>`).join("")}</details></article><div class="methods-readout"><div class="methods-plate-head"><h4>方法图谱</h4><span>定性示意</span></div><figure></figure><dl><div><dt>输入</dt><dd>${item.input}</dd></div><div><dt>可查产物</dt><dd>${item.output}</dd></div></dl><p class="methods-boundary"><strong>使用边界</strong> ${item.boundary}</p></div>`;
+      body.innerHTML = `<article class="methods-question"><h3>${item.question}</h3><ol>${item.steps.map(([title, detail]) => `<li><strong>${title}</strong><p>${detail}</p></li>`).join("")}</ol><button type="button" class="methods-draft" data-action="draft">用这个问题开始研究 <span aria-hidden="true">↗</span></button><details><summary>公式与使用条件</summary>${item.formulas.map(([name, formula, condition]) => `<div class="methods-equation"><strong>${name}</strong><code>${formula}</code><p>${condition}</p></div>`).join("")}</details></article><div class="methods-readout"><div class="methods-plate-head"><h4>方法图谱</h4><span>定性示意</span></div><figure></figure><dl><div><dt>输入</dt><dd>${item.input}</dd></div><div><dt>输出</dt><dd>${item.output}</dd></div></dl></div>`;
       paintFigure();
     }
     function tick(time) {
@@ -402,9 +394,8 @@
             `研究问题：${item.question}`,
             `当前图谱视角：${focus}`,
             `输入：${item.input}`,
-            `可查产物：${item.output}`,
-            `使用边界：${item.boundary}`,
-            "请先确认缺失输入，再给出可编辑的研究方案和核验步骤。仅做规划。",
+            `输出：${item.output}`,
+            "请列出研究步骤和所需输入。",
           ].join("\n"),
         );
       }

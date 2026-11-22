@@ -105,7 +105,7 @@
   border-bottom: 1px solid var(--wb-line);
 }
 #studio .wb-header strong { font-size: clamp(15px, 2vw, 20px); font-weight: 600; }
-#studio .wb-mode { margin-inline-start: auto; color: var(--wb-muted); font-size: 12px; white-space: nowrap; }
+#studio #analysis-nav { margin-inline-start: auto; }
 #studio .wb-menu, #studio .wb-scrim { display: none; }
 #studio .wb-stage {
   flex: 1 0 auto;

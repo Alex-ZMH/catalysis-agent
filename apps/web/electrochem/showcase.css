@@ -140,7 +140,6 @@
 #showcase .cs-stops strong { display: block; font-size: 18px; font-weight: 500; line-height: 1.4; }
 #showcase .cs-stops small { display: block; margin-top: 8px; color: var(--cs-subtle); font-size: 13px; line-height: 1.5; }
 #showcase .cs-stop-icon { color: var(--cs-accent); }
-#showcase .cs-footnote { padding-top: 22px; text-align: center; color: var(--cs-subtle); font-size: 13px; }
 
 #showcase .cs-workflow { display: flex; justify-content: space-between; align-items: center; gap: 40px; padding-block: 150px; scroll-margin-top: 36px; }
 #showcase .cs-workflow h2 { font-size: clamp(34px, 5.2vw, 79px); font-weight: 500; letter-spacing: -.04em; line-height: 1.16; }
@@ -214,7 +213,6 @@
   #showcase .cs-stops { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
   #showcase .cs-stops button { padding: 18px 14px; }
   #showcase .cs-stops small { font-size: 12px; }
-  #showcase .cs-footnote { text-align: left; font-size: 12px; line-height: 1.8; }
   #showcase .cs-workflow { padding-block: 80px; }
   #showcase .cs-footer-bottom { margin-top: 34px; }
   #showcase .cs-footer-bottom a { width: 100%; }

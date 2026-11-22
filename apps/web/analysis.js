@@ -362,7 +362,7 @@ function renderMdAnalysis(run, target) {
       ["请求边界控制", activeModes.map(key => modeLabels[key]).join("、") || "未报告"],
     ]));
     panel.append(element("p",
-      "请求的温差、化学势差和墙速度是边界控制输入，不等于已经维持的场量梯度；测得梯度只接受原生剖面/速度输出的拟合。",
+      "下表中的梯度由采样剖面拟合得到。",
       "ca-physical-note"));
     panel.append(details("请求的外部驱动 JSON", requested));
 
@@ -392,7 +392,7 @@ function renderMdAnalysis(run, target) {
     panel.append(metrics(gradientRows.length ? gradientRows : [["测得梯度", "未报告"]]));
     if (measured.status) panel.append(element("p", measured.status, "ca-muted"));
     if (measured.initial_composition_is_not_a_maintained_gradient) {
-      panel.append(element("p", "初始组成或初始剖面不代表维持中的浓度梯度。", "ca-warning"));
+      panel.append(element("p", "初始组成记录在起始剖面中。", "ca-muted"));
     }
 
     const injection = driving.injection ?? {};
@@ -1069,7 +1069,7 @@ function renderMdAnalysis(run, target) {
               <button id="analysis-transport-import" type="button" disabled>从已完成授权作业带入采样</button>
               <span id="analysis-transport-import-status" class="ca-muted" role="status">选择已完成的授权作业后，可直接带入 plan/job 与 native 采样列。</span>
             </div>
-            <p class="ca-physical-note">自动化范围：只读取授权计划的 metadata 列映射并填入来源 ID/候选分量；不会自动计算梯度或传递系数。提交前请确认模式、分量、窗口和单位。</p>
+            <p class="ca-physical-note">选择计划后会带入数据列和可用分量。设置拟合窗口和单位后运行分析。</p>
             <label>驱动条件<select name="transport_driving">
               <option value="unspecified">未指定</option>
               <option value="gradient_imposed">施加梯度</option>
@@ -1228,7 +1228,7 @@ function renderMdAnalysis(run, target) {
           <button id="agent-kinetics-refresh" type="button">刷新实验表</button>
         </div>
         <p class="ca-muted ca-agent-kinetics-lede">
-          选择当前项目已有研究运行的实验表，直接说明拟合任务。服务端真实识别动力学模型并调用项目拟合；前端不猜测模型，也不上传或复制文件。
+          选择项目内的实验表，输入拟合要求。
         </p>
         <form id="agent-kinetics-form">
           <div class="ca-grid ca-agent-kinetics-source-grid">
@@ -1240,7 +1240,6 @@ function renderMdAnalysis(run, target) {
           <div id="agent-kinetics-source-preview" class="ca-agent-kinetics-preview" aria-live="polite">
             <p class="ca-muted">选择实验表后显示项目、文件名、工作表和可用原始文件。</p>
           </div>
-          <p class="ca-muted ca-agent-kinetics-note">模型识别和拟合由当前项目服务端完成；提交前可编辑指令。结果会从返回的 run_id 读取现有运行详情，显示拟合模型参数及单位。</p>
           <div class="ca-md-actions">
             <button id="agent-kinetics-submit" class="ca-primary" type="submit" disabled>识别模型并拟合</button>
             <span id="agent-kinetics-status" role="status"></span>
@@ -1261,7 +1260,7 @@ function renderMdAnalysis(run, target) {
           </div>
         </div>
         <p class="ca-muted ca-engineering-lede">
-          在当前项目中组合已有 MD 输运物性与动力学拟合结果。页面只保存来源引用、已有数值/公式/单位、工况和拟合窗口；不会重新求解或替代原始分析。
+          选择一项 MD 输运物性和一项动力学拟合结果，保存为工程工况。
         </p>
         <form id="engineering-form">
           <div class="ca-grid">
@@ -1290,7 +1289,6 @@ function renderMdAnalysis(run, target) {
                 <textarea id="engineering-kinetics-window" rows="4" readonly placeholder='{"temperature_min":null,"temperature_max":null,"partition":"train"}'></textarea>
               </label>
             </div>
-            <p class="ca-muted">数值、公式、单位和来源来自所选原结果；服务端以原结果拟合窗口为准，工况参数由你确认后保存。空值显示为“未报告”，不会被 UI 推断。</p>
           </fieldset>
           <div class="ca-md-actions">
             <button id="engineering-save" class="ca-primary" type="submit">保存工程工况</button>
@@ -1411,7 +1409,7 @@ function renderMdAnalysis(run, target) {
                       <label>动态分组更新间隔（契约固定为 1）<input id="md-driving-temperature-groups" type="number" min="1" step="1" value="1" readonly></label>
                     </div>
                     <label class="ca-a5-check"><input id="md-driving-temperature-zero-force" type="checkbox" checked disabled>消除随机力净和（zero_random_force，固定 true）</label>
-                    <p class="ca-muted">后端按 seed + 1 派生冷区种子，组成员每步按实时位置更新；基础积分器必须是 NVE。目标温差不是测得梯度。</p>
+                    <p class="ca-muted">采用 NVE 积分。冷区随机种子为 seed + 1，每步按原子位置更新分组。</p>
                   </fieldset>
                 </fieldset>
                 <fieldset class="ca-driving-card">
@@ -1420,9 +1418,9 @@ function renderMdAnalysis(run, target) {
                   <fieldset id="md-driving-concentration-fields" class="ca-driving-fields" hidden disabled>
                     <label>浓度物种（逗号分隔，须匹配结构元素）<input id="md-driving-concentration-species" placeholder="元素符号，例如 H,O"></label>
                     <label>交换温度（K，可留空沿用初始温度）<input id="md-driving-concentration-temperature" type="number" step="any"></label>
-                    <label>两个 reservoir 区域 JSON（必须恰好两个）<textarea id="md-driving-concentration-regions" rows="5" placeholder='[{"name":"low","lo":0,"hi":1,"every":100,"attempts":10,"seed":101,"mu_eV":{"<species_1>":0,"<species_2>":0}},{"name":"high","lo":9,"hi":10,"every":100,"attempts":10,"seed":102,"mu_eV":{"<species_1>":0,"<species_2>":0}}]'></textarea></label>
+                    <label>两个组分储库（JSON）<textarea id="md-driving-concentration-regions" rows="5" placeholder='[{"name":"low","lo":0,"hi":1,"every":100,"attempts":10,"seed":101,"mu_eV":{"<species_1>":0,"<species_2>":0}},{"name":"high","lo":9,"hi":10,"every":100,"attempts":10,"seed":102,"mu_eV":{"<species_1>":0,"<species_2>":0}}]'></textarea></label>
                     <label>动能处理<select id="md-driving-concentration-ke"><option value="yes">yes</option><option value="no">no</option></select></label>
-                    <p class="ca-muted">semi_grand 固定为 true；化学势差控制响应，不保证目标浓度或固定浓度梯度。区域按当前位置实时选原子，且 atom/swap 不更新每原子电荷或质量。</p>
+                    <p class="ca-muted">两储库的化学势差驱动组分交换。semi_grand 模式按当前位置选取原子，交换时保留各原子的电荷和质量。</p>
                   </fieldset>
                 </fieldset>
                 <fieldset class="ca-driving-card">
@@ -1433,12 +1431,12 @@ function renderMdAnalysis(run, target) {
                       <label>模式<select id="md-driving-shear-mode"><option value="moving_walls">moving_walls</option><option value="sllod" disabled>sllod（当前不支持）</option></select></label>
                       <label>切向轴<select id="md-driving-shear-tangential"><option value="x">x</option><option value="y">y</option><option value="z">z</option></select></label>
                     </div>
-                    <label>两个 wall 区域 JSON（必须恰好两个）<textarea id="md-driving-shear-regions" rows="5" placeholder='[{"name":"wall_low","lo":0,"hi":1,"velocity_A_per_ps":0},{"name":"wall_high","lo":9,"hi":10,"velocity_A_per_ps":0}]'></textarea></label>
-                    <p class="ca-muted">法向边界必须非周期且晶胞正交；壁原子由 fix move 驱动并排除出 NVE。请求墙速不等于已维持的速度梯度，须由原生速度与动量通量采样拟合。</p>
+                    <label>两个壁面区域（JSON）<textarea id="md-driving-shear-regions" rows="5" placeholder='[{"name":"wall_low","lo":0,"hi":1,"velocity_A_per_ps":0},{"name":"wall_high","lo":9,"hi":10,"velocity_A_per_ps":0}]'></textarea></label>
+                    <p class="ca-muted">采用正交晶胞和非周期法向边界。fix move 驱动壁原子，NVE 积分作用于流体组。</p>
                   </fieldset>
                 </fieldset>
               </div>
-              <p class="ca-physical-note">输入：边界控制参数。输出：原生场/速度/通量剖面的测得梯度，以及热库交换、atom/swap 统计和墙面动量回执。初始场、目标场和控制参数不会被界面标作已维持梯度。</p>
+              <p class="ca-physical-note">采样结果包括剖面、拟合梯度、热库交换量、组分交换统计和壁面动量。</p>
             </div>
           </fieldset>
           <label>EAM 势函数文件<input id="md-job-potential" type="file"></label>

@@ -81,7 +81,6 @@
                 <span><strong>${scale.title}</strong><small>${scale.english}</small></span><span class="cs-stop-icon" aria-hidden="true">${index === 0 ? '▤' : '+'}</span>
               </button>`).join('')}
             </div>
-            <p class="cs-footnote">全景与各专题图为机理概念渲染。定量能垒需在指定电位与界面条件下计算。</p>
           </div>
         </section>
         <div id="cases"></div>
@@ -95,12 +94,12 @@
         <div class="cs-wordmark" aria-hidden="true">${brand}</div>
         <div class="cs-footer-bottom">
           <a href="#home">从电极界面到膜电极。</a>
-          <button class="cs-about" type="button">能力与来源 ${diagonal}</button><span>© 2026 电化学研究 STUDIO</span>
+          <button class="cs-about" type="button">图示与来源 ${diagonal}</button><span>© 2026 电化学研究 STUDIO</span>
         </div>
       </footer>
       <dialog class="cs-sources" aria-labelledby="cs-sources-title">
-        <h2 id="cs-sources-title">能力与来源</h2>
-        <p>全景和四张专题图用于辨识电荷重排、反应中间体和膜电极结构。示范曲线采用教学参数。</p>
+        <h2 id="cs-sources-title">图示与来源</h2>
+        <p>全景和专题图展示反应机理。自由能与速率曲线使用示例参数。</p>
         <p>析氢采用酸性 Volmer–Heyrovsky 路径，析氧采用单中心吸附物演化路径。PEM 示范以纯化水供给阳极。</p>
         <p>装置原理见<a href="https://www.energy.gov/cmei/fuels/hydrogen-production-electrolysis" target="_blank" rel="noopener">美国能源部的 PEM 水电解说明</a>。直接海水电解的界面化学可参阅<a href="https://doi.org/10.1038/s41560-023-01195-x" target="_blank" rel="noopener">《Nature Energy》研究论文</a>。</p>
         <form method="dialog"><button class="cs-primary">关闭</button></form>
