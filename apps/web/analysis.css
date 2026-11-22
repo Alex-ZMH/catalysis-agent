@@ -253,3 +253,6 @@
 @media (prefers-reduced-motion: reduce) {
   #studio .ca-agent-kinetics-workbench * { scroll-behavior: auto; }
 }
+
+.electrochem #studio .ca-panel button.ca-primary { color: #fff; }
+.electrochem #studio .ca-panel .ca-warning, .electrochem #studio #md-slurm-cancel:not(:disabled) { color: #873c16; }

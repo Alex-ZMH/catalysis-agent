@@ -37,12 +37,18 @@ ROOT = Path(__file__).resolve().parents[1]
 def static_files():
     archive = baseline_git("archive", "--format=zip", "refs/tags/frontend-baseline-v1")
     with ZipFile(io.BytesIO(archive)) as zipped:
-        files = {"/" + p: zipped.read(p) for p in zipped.namelist() if not p.endswith("/")
-                 and not p.startswith("tools/")}
+        files = {"/general/" + name: zipped.read(name) for name in zipped.namelist()
+                 if not name.endswith("/") and not name.startswith("tools/")}
+    frontend = ROOT / "apps" / "web" / "electrochem"
+    for path in frontend.rglob("*"):
+        if path.is_file() and path.suffix in {".html", ".css", ".js", ".webp", ".svg", ".ttf", ".txt"}:
+            files["/" + path.relative_to(frontend).as_posix()] = path.read_bytes()
     for name in ("analysis.css", "analysis.js"):
         files["/" + name] = (ROOT / "apps" / "web" / name).read_bytes()
     overlay = b'<link rel="stylesheet" href="/analysis.css"><script defer src="/analysis.js"></script>'
-    files["/"] = files["/index.html"] = files["/index.html"].replace(b"</head>", overlay + b"</head>")
+    for prefix in ("/", "/general/"):
+        index = prefix + "index.html"
+        files[prefix] = files[index] = files[index].replace(b"</head>", overlay + b"</head>")
     return files
 
 
@@ -529,7 +535,7 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self, path):
         if path in self.server.assets:
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-            if path in {"/", "/index.html"}:
+            if path.endswith(("/", ".html")):
                 mime = "text/html; charset=utf-8"
             self._send(200, self.server.assets[path], mime)
             return

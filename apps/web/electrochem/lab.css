@@ -1,0 +1,257 @@
+.catalysis-lab {
+  --lab-ink: #102a40;
+  --lab-muted: #475d70;
+  --lab-line: #d7e2eb;
+  --lab-soft: #f3f7fb;
+  --lab-white: #ffffff;
+  --lab-blue: #155cbe;
+  --lab-teal: #007b87;
+  --lab-amber: #b96d17;
+  padding-block: 110px;
+  color: var(--lab-ink);
+  background: var(--lab-soft);
+}
+.catalysis-lab-layout {
+  width: min(1280px, calc(100% - 64px));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10%;
+  align-items: center;
+}
+.catalysis-lab-eyebrow {
+  color: var(--lab-blue) !important;
+  font: 11px/1.2 Consolas, "SFMono-Regular", monospace !important;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.catalysis-lab-intro h2 {
+  margin: 18px 0 0;
+  color: var(--lab-ink);
+  font-size: clamp(32px, 5vw, 72px);
+  line-height: 1.12;
+  letter-spacing: -.045em;
+}
+.catalysis-lab-intro p {
+  margin: 10px 0 0;
+  color: var(--lab-muted);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.catalysis-lab-intro h2 + .catalysis-lab-lede {
+  margin-top: 28px;
+  color: #29465f;
+  font-size: 18px;
+}
+.catalysis-lab-formula {
+  margin: 40px 0 22px;
+  color: var(--lab-blue);
+  font-size: clamp(26px, 3vw, 48px);
+  letter-spacing: -.04em;
+}
+.catalysis-lab-panel {
+  padding: 36px 42px;
+  border: 1px solid var(--lab-line);
+  background: var(--lab-white);
+  box-shadow: 0 18px 42px rgba(16, 42, 64, .08);
+}
+.catalysis-lab-heading,
+.catalysis-lab-readout,
+.catalysis-lab-panel label,
+.catalysis-lab-action,
+.catalysis-lab-metrics {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.catalysis-lab-heading > span {
+  color: var(--lab-ink);
+  font-weight: 650;
+}
+.catalysis-lab-panel small,
+.catalysis-lab-chart figcaption {
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+.catalysis-lab-switch {
+  display: flex;
+  gap: 4px;
+  margin: 24px 0 12px;
+}
+.catalysis-lab-switch button {
+  padding: 7px 10px;
+  border: 1px solid var(--lab-line);
+  border-radius: 5px;
+  background: var(--lab-white);
+  color: var(--lab-muted);
+  font-size: 12px;
+}
+.catalysis-lab-switch button:hover {
+  border-color: #8ab1dd;
+  color: var(--lab-blue);
+}
+.catalysis-lab-switch button[aria-pressed="true"] {
+  border-color: var(--lab-blue);
+  color: var(--lab-white);
+  background: var(--lab-blue);
+}
+.catalysis-lab-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.catalysis-lab-steps button {
+  min-height: 59px;
+  padding: 8px;
+  border: 1px solid var(--lab-line);
+  border-radius: 6px;
+  background: var(--lab-soft);
+  color: var(--lab-muted);
+  text-align: left;
+}
+.catalysis-lab-steps button:hover {
+  border-color: #8ab1dd;
+  background: #edf5ff;
+}
+.catalysis-lab-steps button[aria-pressed="true"] {
+  border-color: var(--lab-blue);
+  color: var(--lab-ink);
+  background: #e8f1ff;
+  box-shadow: inset 3px 0 0 var(--lab-blue);
+}
+.catalysis-lab-steps b {
+  display: block;
+  color: var(--lab-blue);
+  font: 10px Consolas, "SFMono-Regular", monospace;
+}
+.catalysis-lab-steps span {
+  display: block;
+  font-size: 13px;
+}
+.catalysis-lab-steps small {
+  display: block;
+  margin-top: 2px;
+  color: #62778a;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catalysis-lab-readout {
+  flex-wrap: wrap;
+  margin: 22px 0 17px;
+}
+.catalysis-lab-readout output {
+  color: var(--lab-blue);
+  font-variant-numeric: tabular-nums;
+}
+.catalysis-lab-readout output span:first-child {
+  font-size: clamp(43px, 5vw, 78px);
+  line-height: 1;
+  letter-spacing: -.06em;
+}
+.catalysis-lab-readout output span:last-child {
+  margin-left: 8px;
+  color: var(--lab-teal);
+  font-size: 22px;
+}
+.catalysis-lab-panel label {
+  color: var(--lab-muted);
+  font-size: 14px;
+}
+.catalysis-lab-panel label span,
+.catalysis-lab-metrics strong {
+  color: var(--lab-ink);
+  font-variant-numeric: tabular-nums;
+}
+.catalysis-lab-panel input[type="range"] {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  margin: 2px 0 12px;
+  accent-color: var(--lab-blue);
+  cursor: pointer;
+  color-scheme: light;
+}
+.catalysis-lab-metrics {
+  padding: 11px 0;
+  border-top: 1px solid var(--lab-line);
+  color: var(--lab-muted);
+  font: 12px Consolas, "SFMono-Regular", monospace;
+}
+.catalysis-lab-chart { margin: 14px 0 0; }
+.catalysis-lab-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.catalysis-lab-chart text {
+  fill: var(--lab-muted);
+  font: 11px "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.catalysis-lab-grid { stroke: #dce7ef; fill: none; }
+.catalysis-lab-axes { stroke: #7b91a3; fill: none; }
+.catalysis-lab-curve {
+  stroke: var(--lab-blue);
+  stroke-width: 2;
+  fill: none;
+}
+.catalysis-lab-point {
+  fill: var(--lab-amber);
+  stroke: var(--lab-white);
+  stroke-width: 1.5;
+}
+.catalysis-lab-chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  justify-content: center;
+}
+.catalysis-lab-chart figcaption span::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--lab-blue);
+}
+.catalysis-lab-chart figcaption span:last-child::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lab-amber);
+}
+.catalysis-lab-action {
+  width: 100%;
+  margin-top: 18px;
+  padding: 15px 0 0;
+  border: 0;
+  border-top: 1px solid var(--lab-line);
+  background: transparent;
+  color: var(--lab-ink);
+  text-align: left;
+  cursor: pointer;
+}
+.catalysis-lab-action:hover { color: var(--lab-blue); }
+.catalysis-lab :is(button, input):focus-visible {
+  outline: 2px solid var(--lab-blue);
+  outline-offset: 3px;
+}
+@media (max-width: 900px) {
+  .catalysis-lab { padding-block: 80px; }
+  .catalysis-lab-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 54px;
+  }
+}
+@media (max-width: 560px) {
+  .catalysis-lab { padding-block: 70px; }
+  .catalysis-lab-layout {
+    width: calc(100% - 32px);
+    gap: 32px;
+  }
+  .catalysis-lab-panel { padding: 24px 18px; }
+  .catalysis-lab-steps { grid-template-columns: minmax(0, 1fr); }
+}

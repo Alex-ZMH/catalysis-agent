@@ -1,0 +1,219 @@
+#studio {
+  --wb-bg: #ffffff;
+  --wb-sidebar: #f3f7fb;
+  --wb-panel: #ffffff;
+  --wb-line: #d6e2ec;
+  --wb-text: #102a40;
+  --wb-muted: #475d70;
+  --wb-accent: #155cbe;
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  overflow: hidden;
+  color-scheme: light;
+  color: var(--wb-text);
+  background: var(--wb-bg);
+  font: 15px/1.55 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+#studio *, #studio *::before, #studio *::after { box-sizing: border-box; }
+#studio[hidden], #studio [hidden] { display: none; }
+#studio h1, #studio h2, #studio p { margin: 0; }
+#studio button, #studio textarea { font: inherit; color: inherit; }
+#studio button { cursor: pointer; }
+#studio a { color: inherit; text-decoration: none; }
+#studio :focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 3px; }
+
+#studio .wb-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 28px 16px 18px;
+  background: var(--wb-sidebar);
+  border-inline-end: 1px solid var(--wb-line);
+  box-shadow: 8px 0 26px rgba(16, 42, 64, .04);
+}
+
+#studio .wb-brand {
+  padding-inline: 10px;
+  font: 700 18px/1.5 Consolas, monospace;
+  white-space: nowrap;
+}
+
+#studio .wb-brand span { color: #007b87; }
+#studio .wb-new, #studio .wb-menu {
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  background: var(--wb-panel);
+  color: var(--wb-text);
+}
+
+#studio .wb-new {
+  margin: 30px 0 26px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+#studio .wb-sidebar h2 {
+  padding: 0 10px 9px;
+  color: var(--wb-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#studio .wb-history {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+}
+
+#studio .wb-history p { padding: 4px 6px; color: var(--wb-muted); font-size: 13px; }
+#studio .wb-history button {
+  display: block;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#studio .wb-history button:hover, #studio .wb-history [aria-current] { background: #e7f0fb; color: var(--wb-text); }
+#studio .wb-back {
+  margin-top: 14px;
+  padding: 12px 10px 2px;
+  border-top: 1px solid var(--wb-line);
+  color: var(--wb-muted);
+  font-size: 13px;
+}
+#studio .wb-back:hover { color: var(--wb-accent); }
+
+#studio .wb-main { min-width: 0; overflow: auto; display: flex; flex-direction: column; }
+#studio .wb-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px clamp(16px, 3vw, 32px);
+  border-bottom: 1px solid var(--wb-line);
+}
+#studio .wb-header strong { font-size: clamp(15px, 2vw, 20px); font-weight: 600; }
+#studio .wb-mode { margin-inline-start: auto; color: var(--wb-muted); font-size: 12px; white-space: nowrap; }
+#studio .wb-menu, #studio .wb-scrim { display: none; }
+#studio .wb-stage {
+  flex: 1 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 26px clamp(16px, 5vw, 48px) clamp(32px, 10vh, 96px);
+}
+#studio .wb-content { width: 100%; max-width: 760px; min-width: 0; }
+#studio .wb-welcome { margin-bottom: 26px; text-align: center; }
+#studio .wb-mark {
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 23px;
+  border: 1px solid var(--wb-accent);
+  box-shadow: inset 0 0 0 5px var(--wb-bg), inset 0 0 0 6px var(--wb-accent);
+  transform: rotate(45deg);
+}
+#studio .wb-welcome h1 { color: var(--wb-text); font-size: clamp(26px, 4vw, 38px); font-weight: 550; letter-spacing: -.035em; line-height: 1.25; }
+#studio .wb-welcome p { margin-top: 10px; color: var(--wb-muted); font-size: 14px; }
+#studio .wb-composer {
+  padding: 16px;
+  border: 1px solid var(--wb-line);
+  border-radius: 20px;
+  background: var(--wb-panel);
+  box-shadow: 0 16px 38px rgba(16, 42, 64, .07);
+}
+#studio .wb-composer:focus-within { border-color: #6d969f; }
+#studio .wb-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  max-height: 50vh;
+  padding: 2px 3px;
+  resize: vertical;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1.65;
+}
+#studio .wb-composer textarea:focus-visible { outline-offset: 0; }
+#studio .wb-composer textarea { color: var(--wb-text); }
+#studio .wb-composer textarea::placeholder { color: #71859a; opacity: 1; }
+#studio .wb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; }
+#studio .wb-status { flex: 1 1 160px; color: var(--wb-muted); font-size: 12px; }
+#studio .wb-save {
+  margin-inline-start: auto;
+  padding: 8px 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--wb-accent);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+}
+#studio .wb-save:disabled {
+  cursor: default;
+  border-color: var(--wb-line);
+  background: #edf3f8;
+  color: var(--wb-muted);
+}
+#studio .wb-save:enabled:hover { background: #0f4eaa; }
+#studio .wb-suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+#studio .wb-suggestions button {
+  min-height: 46px;
+  padding: 10px 13px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  color: var(--wb-muted);
+  background: var(--wb-panel);
+  text-align: left;
+  font-size: 13px;
+}
+#studio .wb-suggestions button:hover, #studio .wb-new:hover {
+  border-color: #55717c;
+  color: var(--wb-text);
+  background: var(--wb-panel);
+}
+
+@media (max-width: 800px) {
+  #studio { grid-template-columns: minmax(0, 1fr); }
+  #studio .wb-header { min-height: 64px; }
+  #studio .wb-menu { display: grid; place-items: center; width: 40px; height: 40px; }
+  #studio .wb-sidebar {
+    display: none;
+    position: absolute;
+    z-index: 2;
+    inset: 0 auto 0 0;
+    width: min(280px, calc(100% - 52px));
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  #studio.wb-drawer-open .wb-sidebar { display: flex; }
+  #studio .wb-scrim:not([hidden]) {
+    display: block;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 0;
+    background: rgba(16, 42, 64, .28);
+  }
+}
+
+@media (max-width: 480px) {
+  #studio .wb-suggestions { grid-template-columns: minmax(0, 1fr); }
+}
