@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import threading
 from urllib.parse import quote, urlsplit
@@ -22,31 +21,39 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from jsonschema import ValidationError
 from packages.agent.approvals import ApprovalStore, RestoredApprovalError
+from packages.agent.conversations import Conversations, answer as chat_answer
 from packages.agent.egress import restrict_egress
 from packages.agent.md_slurm import MDSlurm, SchedulerUnavailable, SlurmBroker
 from packages.agent.model_broker import ModelBroker, ModelUnavailable
 from packages.agent.zeus_identity import IdentityUnavailable
+from packages.revision import source_commit
 from packages.agent.slurm import SyntheticSlurm
 from packages.agent.workspace import (Workspace, build_transport_inputs, json_bytes,
                                       read_transport_metadata)
-from scripts.frontend_baseline import git as baseline_git
+from scripts.frontend_baseline import TAG, git as baseline_git
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def static_files():
-    archive = baseline_git("archive", "--format=zip", "refs/tags/frontend-baseline-v1")
-    with ZipFile(io.BytesIO(archive)) as zipped:
-        files = {"/general/" + name: zipped.read(name) for name in zipped.namelist()
-                 if not name.endswith("/") and not name.startswith("tools/")}
+    files = {}
+    if (ROOT / ".git").exists() and baseline_git("tag", "--list", TAG).strip():
+        archive = baseline_git("archive", "--format=zip", "refs/tags/" + TAG)
+        with ZipFile(io.BytesIO(archive)) as zipped:
+            files = {"/general/" + name: zipped.read(name) for name in zipped.namelist()
+                     if not name.endswith("/") and not name.startswith("tools/")}
     frontend = ROOT / "apps" / "web" / "electrochem"
     for path in frontend.rglob("*"):
         if path.is_file() and path.suffix in {".html", ".css", ".js", ".webp", ".svg", ".ttf", ".txt"}:
             files["/" + path.relative_to(frontend).as_posix()] = path.read_bytes()
     for name in ("analysis.css", "analysis.js"):
         files["/" + name] = (ROOT / "apps" / "web" / name).read_bytes()
-    overlay = b'<link rel="stylesheet" href="/analysis.css"><script defer src="/analysis.js"></script>'
-    for prefix in ("/", "/general/"):
+    overlay = b'<meta name="catalysis-service" content="1"><link rel="stylesheet" href="/analysis.css"><script defer src="/analysis.js"></script>'
+    prefixes = ["/"]
+    if "/general/index.html" in files:
+        prefixes.append("/general/")
+        files["/index.html"] = files["/index.html"].replace(b"</head>", b'<meta name="catalysis-legacy" content="general"></head>')
+    for prefix in prefixes:
         index = prefix + "index.html"
         files[prefix] = files[index] = files[index].replace(b"</head>", overlay + b"</head>")
     return files
@@ -111,7 +118,9 @@ PROJECT_PATH = re.compile(r"/api/projects/([a-zA-Z0-9][a-zA-Z0-9_-]{0,95})(/.*)"
 RECEIPT_PATH = re.compile(r"/api/plans/(plan-[0-9a-f]{64})/receipt")
 BACKUP_PATH = re.compile(r"/api/backups/([0-9a-f]{64})")
 COOKIE_NAME = "catalysis_session"
+CHAT_PATH = re.compile(r"/api/chats/([a-f0-9]{32})(?:/(send|stop))?")
 ACTIONS = {
+    (False, "/api/chats"): "project.chats.list",
     (False, "/api/runs"): "project.runs.list",
     (False, "/api/engineering"): "project.engineering.list",
     (True, "/api/engineering"): "project.engineering.create",
@@ -119,6 +128,7 @@ ACTIONS = {
     (False, "/api/backups"): "project.backups.list",
     (True, "/api/runs"): "project.run.create",
     (True, "/api/agent/kinetics"): "project.agent.kinetics",
+    (True, "/api/agent/electrochem"): "project.agent.electrochem",
     (True, "/api/cell"): "project.cell.check",
     (True, "/api/md-handoff"): "project.structure.convert",
     (True, "/api/md-job"): "project.md.prepare",
@@ -128,6 +138,8 @@ ACTIONS = {
 
 
 def access_action(path, post):
+    if (chat := CHAT_PATH.fullmatch(path)):
+        return "project.chat." + (chat[2] or "read"), {}
     if (post, path) in ACTIONS:
         return ACTIONS[post, path], {}
     if not post and (engineering := ENGINEERING_PATH.fullmatch(path)):
@@ -367,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/session" and not managed and not post:
-                self._send(200, json_bytes({"managed": False, "actor": None, "projects": {}}))
+                self._session(None)
                 return
             if managed and getattr(self, "audit_event", None) is not None:
                 path = self._managed(path, post)
@@ -456,8 +468,11 @@ class Handler(BaseHTTPRequestHandler):
         return "/api" + suffix
 
     def _session(self, actor):
-        self._send(200, json_bytes({"managed": True, "actor": actor,
-                                    "projects": self.server.access.projects(actor) if actor else {}}))
+        session = {"managed": self.server.access is not None, "actor": actor,
+                   "projects": self.server.access.projects(actor) if actor else {}}
+        if (actor or not session["managed"]) and getattr(self.server.model_broker, 'allow_planner', False):
+            session['electrochem_planner'] = True
+        self._send(200, json_bytes(session))
 
     def _session_action(self, path, actor, token):
         body = self._json_body()
@@ -533,6 +548,10 @@ class Handler(BaseHTTPRequestHandler):
         return scope(record)
 
     def _get(self, path):
+        if path == '/api/chats' or (chat := CHAT_PATH.fullmatch(path)) and not chat[2]:
+            store = self._chats()
+            self._send(200, json_bytes({'chats': store.list()} if path == '/api/chats' else {'turns': store.read(chat[1])}))
+            return
         if path in self.server.assets:
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
             if path.endswith(("/", ".html")):
@@ -746,7 +765,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _agent_kinetics(self):
         if self.server.model_broker is None:
-            raise ModelUnavailable("未配置 MLCC 模型通道。")
+            raise ModelUnavailable("未配置模型通道。可使用本地工具，或由管理员启用 --model-config。")
         body = self._json_body()
         if not isinstance(body.get("instruction"), str) or not body["instruction"].strip():
             raise ValueError("请输入拟合指令。")
@@ -793,7 +812,67 @@ class Handler(BaseHTTPRequestHandler):
             self.audit_event.update(run_id=result["id"], source_run_id=source_run, artifact_id=artifact_id)
         self._send(200, json_bytes({**record, "result": self._run_view(result)}))
 
+    def _chats(self):
+        return Conversations(self.server.data_dir, self.workspace.project, self.workspace.operator)
+
+    def _chat(self, chat, action):
+        body = self._json_body()
+        token = body.get('id')
+        if not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{32}', token):
+            raise ValueError('无效的消息 ID。')
+        store = self._chats()
+        key = (*store.scope, chat)
+        server = self.server
+        if action == 'stop':
+            with server.chat_lock:
+                pending = server.chat_pending.get(key)
+                if pending and pending[0] == token:
+                    pending[2].set()
+                    if getattr(server.model_broker, 'allow_planner', False):
+                        server.model_broker.cancel(pending[1])
+            self._send(200, json_bytes({'turns': store.read(chat)}))
+            return
+        question, expected = body.get('question'), body.get('expected')
+        if (set(body) != {'question','expected','id'} or not isinstance(question, str)
+                or not 0 < len(question.strip()) <= 2000 or type(expected) is not int or not 0 <= expected < 100):
+            raise ValueError('请输入 1–2000 字的问题；每个对话最多 100 轮。')
+        question = question.strip()
+        with server.chat_lock:
+            turns = store.read(chat)
+            if any(turn['id'] == token and turn['question'] == question for turn in turns):
+                self._send(200, json_bytes({'turns': turns}))
+                return
+            if key in server.chat_pending or len(turns) != expected:
+                self._send(409, json_bytes({'error':'对话正在运行或已更新，请稍后从最近对话重新打开。'}))
+                return
+            if len(server.chat_pending) >= 4:
+                raise ModelUnavailable('对话服务正忙，请稍后再试。')
+            internal, stopped = uuid4().hex, threading.Event()
+            server.chat_pending[key] = (token, internal, stopped)
+        try:
+            reply = chat_answer(question, turns, server.model_broker, internal, stopped)
+            with server.chat_lock:
+                if not stopped.is_set():
+                    store.append(chat, token, expected, question, reply)
+            self._send(200, json_bytes({'turns':store.read(chat)}))
+        finally:
+            with server.chat_lock:
+                server.chat_pending.pop(key, None)
+
     def _post(self, path):
+        if (chat := CHAT_PATH.fullmatch(path)) and chat[2]:
+            self._chat(*chat.groups())
+            return
+        if path == "/api/agent/electrochem":
+            if not getattr(self.server.model_broker, 'allow_planner', False):
+                raise ModelUnavailable('未启用电催化模型规划。仍可使用本地分析工具。')
+            body = self._json_body()
+            if (set(body) != {'instruction'} or not isinstance(body['instruction'], str)
+                    or not 0 < len(body['instruction'].strip()) <= 2000):
+                raise ValueError('仅接受 1–2000 字的研究问题，不接受附件或分析参数。')
+            decision = self.server.model_broker.call({'mode': 'electrochem', 'instruction': body['instruction'].strip()})
+            self._send(200, json_bytes({'tool': decision['arguments']['tool'], 'model': decision['model']}))
+            return
         if path == "/api/agent/kinetics":
             self._agent_kinetics()
             return
@@ -986,7 +1065,7 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
                                   AuditLog(managed_paths[1]), ProjectBackups(managed_paths[2]))
     mark_managed(data_dir, managed)
     assets = static_files()
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    commit = source_commit(ROOT)
     server = WorkbenchServer(("127.0.0.1", port), Handler)
     server.access = access
     try:
@@ -1003,6 +1082,7 @@ def make_server(data_dir, project, operator, port, max_upload_mib=64, workers=2,
     server.slurm_receipts, server.approvals = receipts, approvals
     server.synthetic_submission = approvals is not None and approvals.scheduler is not None
     server.model_broker = None
+    server.chat_lock, server.chat_pending = threading.Lock(), {}
     server.workspace, server.assets = store, assets
     server.upload_limit = max_upload_mib * 1024 * 1024
     server.analysis_slots = threading.BoundedSemaphore(workers)
@@ -1016,6 +1096,7 @@ def main():
     parser.add_argument("--project", default="local")
     parser.add_argument("--operator", default="local-user")
     parser.add_argument("--port", type=int, default=8771)
+    parser.add_argument("--open", action="store_true", help="Open the local workbench in the default browser")
     parser.add_argument("--max-upload-mib", type=int, default=64)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--a6-synthetic-slurm", action="store_true",
@@ -1027,20 +1108,28 @@ def main():
     parser.add_argument("--backup-root", type=Path)
     parser.add_argument("--zeus-auth", action="store_true",
                         help="Enable the explicitly configured Zeus identity broker")
-    parser.add_argument("--mlcc-model-config", type=Path, help="Enable the explicitly authorized MLCC model bridge")
+    model = parser.add_mutually_exclusive_group()
+    model.add_argument("--model-config", type=Path, help="Enable the optional model bridge with a private dotenv file")
+    model.add_argument("--mlcc-model-config", type=Path, help="Compatibility: load an operator-trusted shell profile")
+    model.add_argument("--mlcc-worker-config", type=Path, help="Use the MLCC worker's model over SSH without copying its credentials")
     args = parser.parse_args()
     with make_server(args.data_dir.expanduser(), args.project, args.operator, args.port,
                      args.max_upload_mib, args.workers, args.a6_synthetic_slurm,
                      access_policy=args.access_policy, audit_log=args.audit_log, backup_root=args.backup_root,
                      md_slurm_config=args.md_slurm_config, zeus_auth=args.zeus_auth) as server:
-        if args.mlcc_model_config is not None:
-            server.model_broker = ModelBroker(args.mlcc_model_config)
+        config = args.model_config or args.mlcc_model_config or args.mlcc_worker_config
+        if config is not None:
+            server.model_broker = ModelBroker(config, shell_config=args.mlcc_model_config is not None,
+                                              ssh_worker=args.mlcc_worker_config is not None)
         if server.access is not None:
             restrict_egress()
             server.audit.record(dict(time=datetime.now(timezone.utc).isoformat(),
                                      request_id=uuid4().hex, actor=None, project=None,
                                      action="service.start", outcome="allowed", status=200))
         print(f"http://127.0.0.1:{server.server_port}/#studio", flush=True)
+        if args.open and server.access is None:
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{server.server_port}/#studio")
         try:
             server.serve_forever()
         except KeyboardInterrupt:

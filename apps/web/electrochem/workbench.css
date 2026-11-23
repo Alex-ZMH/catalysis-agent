@@ -191,6 +191,22 @@
   background: var(--wb-panel);
 }
 
+#studio .wb-mode, #studio .wb-storage { color: #28645e; background: #e4f3ef; border-radius: 12px; padding: 3px 8px; font-size: 11px; white-space: nowrap; }
+#studio .wb-service, #studio .wb-note { font-size: 12px; color: var(--wb-muted); line-height: 1.6; }
+#studio .wb-note { margin: 8px 0; text-align: center; }
+#studio .wb-service { margin: 12px 8px; }
+#studio .wb-messages { display: grid; gap: 16px; }
+#studio .wb-messages:not(:empty) { margin: 0 0 24px; }
+#studio .wb-message { max-width: 100%; min-width: 0; padding: 12px 16px; border-radius: 12px; overflow-wrap: anywhere; }
+#studio .wb-message.user { background: #edf4f7; justify-self: end; }
+#studio .wb-message.assistant { padding-left: 0; }
+#studio .wb-message > strong { display: block; margin-bottom: 5px; font-size: 12px; color: #31645f; }
+#studio .wb-message.user > p { white-space: pre-wrap; line-height: 1.75; }
+#studio .wb-plot { margin: 10px 0; }
+#studio .wb-lab { margin-top: 18px; }
+#studio .wb-lab summary { cursor: pointer; color: #36586d; font-size: 13px; }
+#studio .wb-message button, #studio .wb-stop { margin-top: 6px; padding: 6px 12px; border: 1px solid var(--wb-line); background: white; color: #23585b; border-radius: 8px; }
+
 @media (max-width: 800px) {
   #studio { grid-template-columns: minmax(0, 1fr); }
   #studio .wb-header { min-height: 64px; }

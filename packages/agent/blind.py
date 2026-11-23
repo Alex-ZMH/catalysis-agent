@@ -12,6 +12,7 @@ from jsonschema import ValidationError
 
 from packages.agent.workspace import Workspace, digest, json_bytes
 from packages.check import link_result
+from packages.revision import source_commit
 from packages.science import field_probe, lammps
 
 
@@ -146,8 +147,7 @@ def main(argv=None):
     try:
         if not (args.data_dir / "projects" / args.project / "runs").is_dir():
             raise ValueError("Existing workbench project required")
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"],
-                                         cwd=Path(__file__).resolve().parents[2], text=True).strip()
+        commit = source_commit()
         store = Workspace(args.data_dir, args.project, "blind-review", commit)
         if args.action == "freeze":
             receipt = json_bytes(freeze(store, args.run_id, args.reference_sha256)) + b"\n"

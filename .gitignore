@@ -3,6 +3,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
+!/start.command
 !/requirements.lock
 !/docs/
 !/docs/acceptance.md
@@ -25,6 +26,7 @@
 !/scripts/frontend_baseline.py
 !/baselines/
 !/baselines/frontend.lock.json
+!/baselines/source-commit.txt
 !/apps/
 !/apps/__init__.py
 !/apps/server.py
@@ -44,6 +46,7 @@
 
 !/docs/roadmap.md
 !/docs/mlcc-migration.md
+!/docs/studio-parity-audit.md
 !/docs/md-job.md
 
 !/docs/md-analysis.md
@@ -54,3 +57,18 @@
 
 !/apps/web/electrochem/
 !/apps/web/electrochem/**
+!/packages/agent/model-client.mjs
+!/tests/electrochem.test.cjs
+!/tests/browser_electrochem.cjs
+!/docs/plans/
+!/docs/plans/2026-11-22-electrochem-studio.md
+
+!/apps/research/
+!/apps/research/**
+/apps/research/node_modules/
+/apps/research/dist/
+/apps/research/public/
+/apps/research/**/.DS_Store
+!/packages/agent/model_broker.mjs
+!/scripts/research_studio.py
+/apps/research/standalone/publisher-library/

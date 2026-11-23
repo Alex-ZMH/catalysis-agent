@@ -1,0 +1,12 @@
+{
+  "purpose": "engineering visualization fixture",
+  "scientificResult": false,
+  "units": "arbitrary",
+  "values": [
+    0,
+    0.5,
+    1,
+    0.5,
+    0
+  ]
+}

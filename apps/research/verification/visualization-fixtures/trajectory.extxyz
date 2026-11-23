@@ -1,0 +1,8 @@
+2
+Properties="species:S:1:pos:R:3" Lattice="3 0 0 0 3 0 0 0 3" pbc="T T T"
+Si 0 0 0
+O 1.5e0 -2 3
+2
+Properties="species:S:1:pos:R:3" Lattice="3 0 0 0 4 0 0 0 5" pbc="T T T"
+Si 0.5 0.5 0.5
+O 1 2 3

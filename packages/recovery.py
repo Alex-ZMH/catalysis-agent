@@ -35,8 +35,8 @@ def main(argv=None):
             report = restore_project(args.archive, args.data_dir, expected_sha256=args.sha256)
         else:
             from packages.agent.replay import replay_project
-            commit = subprocess.check_output(["git", "rev-parse", "HEAD"],
-                                             cwd=Path(__file__).resolve().parents[1], text=True).strip()
+            from packages.revision import source_commit
+            commit = source_commit()
             report = replay_project(args.data_dir, args.project, args.destination, commit)
     except (OSError, ValueError, RuntimeError, EOFError, sqlite3.Error, ValidationError,
             BadZipFile, tarfile.TarError, subprocess.CalledProcessError) as error:

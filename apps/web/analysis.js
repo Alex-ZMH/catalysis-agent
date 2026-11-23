@@ -1570,12 +1570,18 @@ function renderMdAnalysis(run, target) {
     });
 
     let session;
+    const assistant = content.querySelector('.wb-messages') && window.CatalysisWorkbench.mount(document.querySelector('#studio'));
+    function connectChat(scopedRequest, writable) {
+      assistant?.connect?.((path, body, signal) => scopedRequest(path, body ? JSON.stringify(body) : undefined,
+        undefined, jsonHeaders, signal || controller.signal), Boolean(session.electrochem_planner), writable, controller.signal);
+    }
     try {
       session = await request("/api/session");
     } catch (error) {
       // Legacy servers predating sessions retain their direct API routes.
       if (error.status !== 404) {
         setStatus(status, `读取会话失败：${error.message}`, true);
+        assistant?.notice?.('连接失败，请确认项目服务正在运行，再刷新页面。');
         return;
       }
       session = { managed: false };
@@ -1584,6 +1590,7 @@ function renderMdAnalysis(run, target) {
       controls.hidden = true;
       workbench.hidden = false;
       mountWorkspace(panel, workbench, request);
+      connectChat(request, true);
       return;
     }
     if (session.managed !== true) {
@@ -1595,9 +1602,12 @@ function renderMdAnalysis(run, target) {
     setStatus(status, "");
     if (!session.actor) {
       login.hidden = false;
+      assistant?.auth?.('登录', () => { find('#a1-username').closest('details').open = true; find('#a1-username').focus(); });
+      assistant?.notice?.('登录项目后即可发送消息。');
       return;
     }
     logout.hidden = false;
+    assistant?.auth?.('退出', () => logout.click());
     const actor = typeof session.actor === "string" ? session.actor : session.actor.username ?? session.actor.id;
     find("#a1-actor").textContent = actor ?? "";
     const projects = Object.entries(session.projects ?? {}).filter(([id]) => /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/.test(id));
@@ -1625,9 +1635,9 @@ function renderMdAnalysis(run, target) {
     });
 
     projectPrefix = `/api/projects/${encodeURIComponent(project)}`;
-    const projectRequest = async (path, body, kind, headers) => {
+    const projectRequest = async (path, body, kind, headers, signal) => {
       controller.signal.throwIfAborted();
-      const data = await request(projectPath(path), body, kind, headers, controller.signal);
+      const data = await request(projectPath(path), body, kind, headers, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal);
       controller.signal.throwIfAborted();
       return data;
     };
@@ -1635,6 +1645,7 @@ function renderMdAnalysis(run, target) {
     workbench.dataset.role = allowed.get(project);
     find("#md-handoff").hidden = find("#md-job-form").hidden = allowed.get(project) === "viewer";
     mountWorkspace(panel, workbench, projectRequest, controller.signal);
+    connectChat(projectRequest, allowed.get(project) !== 'viewer');
     if (allowed.get(project) === "admin") {
       const backups = find("#a1-backups");
       const refresh = find("#a1-backup-refresh");

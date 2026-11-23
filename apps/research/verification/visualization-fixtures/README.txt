@@ -1,0 +1,1 @@
+All files in this directory are engineering fixtures to test format parsing and interactive visualization. They are NOT calculated MLCC results. Trajectory/volume/VASP band-DOS fixtures adapted from apps/server/src/agent/visualization/*.test.ts.

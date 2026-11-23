@@ -42,7 +42,7 @@
       <header id="home" class="cs-header">
         <a class="cs-brand" href="#home" aria-label="电化学研究 STUDIO 首页">${mark}<strong>${brand}</strong></a>
         <nav id="cs-navigation" aria-label="主导航">
-          <a href="#explore">多尺度图景</a><a href="#cases">研究示范</a><a href="#workflow">开始研究</a><a href="general/">通用催化图景</a>
+          <a href="#explore">多尺度图景</a><a href="#cases">研究示范</a><a href="#workflow">开始研究</a>${document.querySelector('meta[name="catalysis-legacy"]') ? '<a href="general/">通用催化图景</a>' : ''}
         </nav>
         <a class="cs-entry" href="#studio">进入工作台 ${diagonal}</a>
         <button class="cs-menu" type="button" aria-expanded="false" aria-controls="cs-navigation" aria-label="展开导航"><span aria-hidden="true">☰</span></button>

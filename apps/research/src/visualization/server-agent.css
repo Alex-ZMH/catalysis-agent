@@ -1,0 +1,812 @@
+.zeus-server-transcript,
+.zeus-server-composer-dock {
+  --zeus-server-text: var(--text, var(--ink-1, #20201d));
+  --zeus-server-muted: var(--text-soft, var(--ink-3, #77776f));
+  --zeus-server-line: var(--line, var(--border-default, #deded8));
+  --zeus-server-surface: var(--surface, var(--paper-3, #fff));
+  --zeus-server-user-bubble: var(--bubble-user-bg, #efefec);
+  --zeus-server-line-strong: var(--line-strong, var(--border-heavy, #bdbdb7));
+  --zeus-server-surface-soft: var(--surface-soft, var(--paper-2, #f7f7f3));
+  --zeus-server-accent: var(--accent, var(--control-strong-bg, #30302d));
+  --zeus-server-accent-ink: var(--control-strong-ink, #fff);
+  --zeus-server-danger: var(--danger, var(--danger-ink, #b42318));
+  box-sizing: border-box;
+  color: var(--zeus-server-text);
+}
+
+.zeus-server-transcript *,
+.zeus-server-transcript *::before,
+.zeus-server-transcript *::after,
+.zeus-server-composer-dock *,
+.zeus-server-composer-dock *::before,
+.zeus-server-composer-dock *::after {
+  box-sizing: inherit;
+}
+
+.zeus-server-empty,
+.zeus-server-state {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  padding: 40px 24px 120px;
+  text-align: center;
+}
+
+.zeus-server-empty > .zeus-server-assistant-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  font-size: 21px;
+}
+
+.zeus-server-empty h1 {
+  margin: 17px 0 7px;
+  font-size: 25px;
+  letter-spacing: -0.03em;
+}
+
+.zeus-server-empty p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--zeus-server-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.zeus-server-empty > :last-child:not(.zeus-server-assistant-avatar):not(h1):not(p) {
+  margin-top: 1rem;
+}
+
+.zeus-server-state {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-state-error {
+  gap: 0.7rem;
+  color: var(--zeus-server-danger);
+}
+
+.zeus-server-state p {
+  margin: 0;
+}
+
+.zeus-server-state button {
+  border: 1px solid var(--zeus-server-line-strong);
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface);
+  cursor: pointer;
+}
+
+.zeus-server-message-list {
+  width: min(100%, 780px);
+  margin: 0 auto;
+  padding: 30px 28px 90px;
+  list-style: none;
+}
+
+.zeus-server-message-turn {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.zeus-server-user-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.zeus-server-user-message p {
+  max-width: min(82%, 580px);
+  margin: 0;
+  border-radius: 18px 18px 5px 18px;
+  padding: 10px 14px;
+  background: var(--zeus-server-user-bubble);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.zeus-server-message-time {
+  color: var(--zeus-server-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.zeus-server-user-time {
+  margin-top: 0.2rem;
+  padding-right: 0.25rem;
+}
+
+.zeus-server-assistant-time {
+  display: block;
+  margin-top: 0.35rem;
+}
+
+.zeus-server-assistant-message {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+}
+
+.zeus-server-assistant-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--zeus-server-accent-ink);
+  background: var(--zeus-server-accent);
+  font-family: var(--zeus-font-sans, Georgia, 'Times New Roman', serif);
+}
+
+.zeus-server-assistant-content {
+  min-width: 0;
+  padding-top: 0.15rem;
+}
+
+.zeus-server-assistant-output {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.zeus-server-assistant-content > p,
+.zeus-server-assistant-output > p {
+  margin: 5px 0;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.zeus-server-thinking {
+  display: flex;
+  height: 26px;
+  align-items: center;
+  gap: 4px;
+  color: var(--zeus-server-muted);
+  font-size: 12px;
+}
+
+.zeus-server-thinking-label {
+  margin-right: 2px;
+}
+
+.zeus-server-thinking i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--zeus-server-muted);
+  animation: zeus-server-thinking 1s ease-in-out infinite;
+}
+
+.zeus-server-thinking i:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.zeus-server-thinking i:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.zeus-server-process-timeline {
+  margin: 0 0 0.7rem;
+  color: var(--zeus-server-muted);
+  font-size: 12px;
+}
+
+.zeus-server-process-summary {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--zeus-server-line);
+  padding: 0.3rem 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+button.zeus-server-process-summary:hover,
+button.zeus-server-process-summary:focus-visible {
+  color: var(--zeus-server-text);
+}
+
+.zeus-server-process-summary.is-static {
+  cursor: default;
+}
+
+.zeus-server-process-summary-chevron {
+  flex: 0 0 auto;
+  color: var(--zeus-server-muted);
+  transition: transform 140ms ease;
+}
+
+.zeus-server-process-timeline.is-expanded .zeus-server-process-summary-chevron {
+  transform: rotate(90deg);
+}
+
+.zeus-server-process-events {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.45rem 0 0.15rem;
+  list-style: none;
+}
+
+.zeus-server-process-activity {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  padding-top: 0.45rem;
+  color: var(--zeus-server-muted);
+  font-size: 10px;
+}
+
+.zeus-server-process-activity > span {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.zeus-server-process-activity.is-stale > span:last-child {
+  color: var(--zeus-server-danger);
+}
+
+.zeus-server-timeline-event {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.45rem;
+  line-height: 1.45;
+}
+
+.zeus-server-timeline-progress {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.12rem 0;
+  color: var(--zeus-server-text);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.zeus-server-timeline-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 0.35rem;
+  border-radius: 50%;
+  background: var(--zeus-server-line-strong);
+}
+
+.zeus-server-timeline-tool {
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  width: fit-content;
+  max-width: 100%;
+  gap: 0.5rem;
+  padding: 0.14rem 0;
+  color: var(--zeus-server-muted);
+  line-height: 1.45;
+}
+
+.zeus-server-timeline-tool-icon {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--zeus-server-muted);
+  line-height: 1;
+}
+
+.zeus-server-timeline-tool-icon svg {
+  display: block;
+}
+
+.zeus-server-timeline-tool-started > small {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-timeline-tool-completed > small {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-timeline-tool-failed > small {
+  color: var(--zeus-server-danger);
+}
+
+.zeus-server-timeline-tool-started .zeus-server-timeline-tool-icon {
+  color: var(--zeus-server-line-strong);
+}
+
+.zeus-server-timeline-tool-completed .zeus-server-timeline-tool-icon {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-timeline-tool-failed .zeus-server-timeline-tool-icon {
+  color: var(--zeus-server-danger);
+}
+
+.zeus-server-timeline-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.zeus-server-timeline-label strong,
+.zeus-server-timeline-label small {
+  display: block;
+}
+
+.zeus-server-timeline-label small {
+  margin-top: 0.1rem;
+  color: var(--zeus-server-muted);
+  font-size: 10px;
+}
+
+.zeus-server-timeline-event > small {
+  color: var(--zeus-server-muted);
+  white-space: nowrap;
+}
+
+.zeus-server-timeline-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  color: var(--zeus-server-muted);
+  white-space: nowrap;
+}
+
+.zeus-server-timeline-meta small {
+  font-size: inherit;
+}
+
+.zeus-server-progress {
+  margin: 0.35rem 0;
+  color: var(--zeus-server-muted);
+  font-size: 12px;
+}
+
+.zeus-server-message-copy {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  color: var(--zeus-server-muted);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.zeus-server-copy-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem;
+  margin-top: 0.5rem;
+}
+
+.zeus-server-copy-output { margin-top: 0; }
+.zeus-server-copy-user { margin-top: 0.2rem; }
+
+.zeus-server-continue {
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--zeus-server-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--zeus-server-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zeus-server-continue:hover,
+.zeus-server-continue:focus-visible {
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface-soft);
+}
+.zeus-server-continue:focus-visible { outline: 2px solid var(--zeus-server-line-strong); outline-offset: 2px; }
+.zeus-server-continue:disabled { opacity: 0.6; cursor: wait; }
+
+.zeus-server-message-copy:hover,
+.zeus-server-message-copy:focus-visible {
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface-soft);
+  opacity: 1;
+}
+
+.zeus-server-message-copy:focus-visible { outline: 2px solid var(--zeus-server-line-strong); outline-offset: 2px; }
+.zeus-server-message-copy.is-copied { color: var(--zeus-server-accent); opacity: 1; }
+.zeus-server-message-copy svg { display: block; }
+
+.zeus-server-message-note,
+.zeus-server-message-error {
+  color: var(--zeus-server-muted);
+  font-size: 13px;
+}
+
+.zeus-server-message-error {
+  color: var(--zeus-server-danger);
+}
+
+.zeus-server-tool-activity {
+  margin-top: 11px;
+  border: 1px solid var(--zeus-server-line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: var(--zeus-server-muted);
+  font-size: 11px;
+}
+
+.zeus-server-tool-activity summary {
+  cursor: pointer;
+}
+
+.zeus-server-tool-activity ul {
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+  padding: 7px 0 0;
+  border-top: 1px solid var(--zeus-server-line);
+  list-style: none;
+}
+
+.zeus-server-tool-activity li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.zeus-server-tool-activity small {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-artifacts {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.zeus-server-artifacts > button,
+.zeus-server-artifacts > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--zeus-server-line);
+  border-radius: 11px;
+  padding: 0.55rem 0.65rem;
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface);
+  text-align: left;
+}
+
+.zeus-server-artifacts > button {
+  cursor: pointer;
+}
+
+.zeus-server-artifacts > button:hover,
+.zeus-server-artifacts > button:focus-visible {
+  border-color: var(--zeus-server-line-strong);
+  background: var(--zeus-server-surface-soft);
+}
+
+.zeus-server-artifacts > button > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--zeus-server-accent);
+  background: var(--zeus-server-surface-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.zeus-server-artifacts > button > span:nth-child(2),
+.zeus-server-artifacts > div {
+  min-width: 0;
+}
+
+.zeus-server-artifacts strong,
+.zeus-server-artifacts small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeus-server-artifacts strong {
+  font-size: 0.74rem;
+}
+
+.zeus-server-artifacts small {
+  margin-top: 0.12rem;
+  color: var(--zeus-server-muted);
+  font-size: 0.62rem;
+}
+
+.zeus-server-artifacts i {
+  color: var(--zeus-server-accent);
+  font-size: 0.66rem;
+  font-style: normal;
+}
+
+.zeus-server-composer-dock {
+  position: relative;
+  z-index: 2;
+  width: min(100%, 50rem);
+  margin: 0 auto;
+  padding: 0 1.25rem 0.7rem;
+  background: linear-gradient(180deg, transparent, var(--zeus-server-surface) 23%, var(--zeus-server-surface));
+}
+
+.zeus-server-composer {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+  border: 1px solid var(--zeus-server-line-strong);
+  border-radius: 22px;
+  padding: 0.6rem 0.65rem 0.6rem 1rem;
+  background: var(--zeus-server-surface);
+  box-shadow: var(--zeus-shadow-md, 0 5px 24px rgba(25, 25, 22, 0.08));
+}
+
+.zeus-server-composer-attachments {
+  display: flex;
+  width: 100%;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zeus-server-composer-attachments li {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--zeus-server-line);
+  border-radius: 10px;
+  padding: 0.34rem 0.45rem;
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface-soft);
+  font-size: 0.72rem;
+}
+
+.zeus-server-composer-attachments strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeus-server-composer-attachments button {
+  display: grid;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  color: var(--zeus-server-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.zeus-server-composer:focus-within {
+  border-color: var(--zeus-server-line-strong);
+  box-shadow: var(--zeus-shadow-md, 0 5px 26px rgba(25, 25, 22, 0.11));
+}
+
+.zeus-server-composer-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.zeus-server-composer-input {
+  width: 100%;
+  min-height: 34px;
+  max-height: 10rem;
+  resize: none;
+  border: 0;
+  padding: 0.42rem 0;
+  color: var(--zeus-server-text);
+  background: transparent;
+  line-height: 1.5;
+  outline: 0;
+}
+
+.zeus-server-composer-input::placeholder {
+  color: var(--zeus-server-muted);
+}
+
+.zeus-server-composer-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.zeus-server-attach-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.zeus-server-attach-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--zeus-server-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.zeus-server-attach-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.zeus-server-attach-button:hover:not(:disabled) {
+  color: var(--zeus-server-text);
+  background: var(--zeus-server-surface-soft);
+}
+
+.zeus-server-folder-button > span {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.zeus-server-attach-button:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.zeus-server-send-button,
+.zeus-server-stop-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--zeus-server-accent-ink);
+  background: var(--zeus-server-text);
+  cursor: pointer;
+}
+
+.zeus-server-send-button span {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.zeus-server-send-button:hover:not(:disabled),
+.zeus-server-stop-button:hover:not(:disabled) {
+  background: var(--zeus-server-accent);
+}
+
+.zeus-server-send-button:disabled,
+.zeus-server-stop-button:disabled {
+  cursor: default;
+  opacity: 0.18;
+}
+
+.zeus-server-stop-button span {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--zeus-server-accent-ink);
+}
+
+.zeus-server-composer-error {
+  margin: 0.45rem 0 0;
+  color: var(--zeus-server-danger);
+  font-size: 0.73rem;
+  text-align: center;
+}
+
+.zeus-server-composer-stop-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.zeus-server-composer-stop-error button {
+  flex: none;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 0.35rem;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.zeus-server-composer-helper {
+  display: block;
+  margin-top: 0.45rem;
+  color: var(--zeus-server-muted);
+  font-size: 0.65rem;
+  text-align: center;
+}
+
+@keyframes zeus-server-thinking {
+  0%, 100% { opacity: 0.35; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
+@media (max-width: 760px) {
+  .zeus-server-message-list {
+    padding-inline: 1rem;
+  }
+
+  .zeus-server-user-message p {
+    max-width: 92%;
+  }
+
+  .zeus-server-composer-dock {
+    padding-inline: 0.75rem;
+  }
+
+  .zeus-server-process-events {
+    padding-inline: 0.55rem;
+  }
+
+  .zeus-server-timeline-event {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .zeus-server-timeline-event > small {
+    grid-column: 2;
+    font-size: 10px;
+  }
+
+  .zeus-server-artifacts > button,
+  .zeus-server-artifacts > div {
+    grid-template-columns: 27px minmax(0, 1fr) auto;
+    gap: 0.45rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zeus-server-thinking i {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}

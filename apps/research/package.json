@@ -1,0 +1,36 @@
+{
+  "name": "catalysis-research-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4317",
+    "server": "node server.mjs",
+    "build": "vite build",
+    "start": "node server.mjs",
+    "worker": "node standalone/worker.mjs",
+    "test": "node --test src/*.test.* server.test.mjs standalone/*.test.mjs standalone/visualization/tests/*.test.mjs && tsx --test src/visualization/tests/*.test.ts src/visualization/tests/*.test.tsx",
+    "prebuild": "node scripts/build-portable-markdown.mjs && node scripts/prepare-pdf-assets.mjs",
+    "predev": "node scripts/build-portable-markdown.mjs && node scripts/prepare-pdf-assets.mjs"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "tsx": "4.21.0",
+    "vite": "8.0.8"
+  },
+  "dependencies": {
+    "@chemistry/space-groups": "3.5.0",
+    "@phosphor-icons/react": "2.1.10",
+    "3dmol": "2.5.5",
+    "fflate": "0.8.3",
+    "katex": "0.19.1",
+    "markdown-it": "15.0.3",
+    "markdown-it-texmath": "1.0.0",
+    "pdfjs-dist": "6.5.438",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  }
+}

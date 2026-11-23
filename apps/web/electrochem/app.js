@@ -2,10 +2,12 @@
   const showcase = document.getElementById('showcase');
   const studio = document.getElementById('studio');
   const assistant = window.CatalysisWorkbench.mount(studio);
+  const researchStudio = document.querySelector('meta[name="catalysis-research-studio"]');
   let cases;
   let displayingStudio = false;
   function updateRoute() {
     const inStudio = location.hash === '#studio';
+    if (inStudio && researchStudio) { location.replace('../#studio'); return; }
     showcase.hidden = inStudio;
     studio.hidden = !inStudio;
     document.title = inStudio ? '电化学研究 Studio · 研究助手' : '电化学研究 Studio · 从电子转移到海水电解';
@@ -23,6 +25,11 @@
     if (!inStudio && location.hash === '#home') window.scrollTo(0, 0);
   }
   function openDraft(text = '') {
+    if (researchStudio) {
+      if (text) sessionStorage.setItem('catalysis-prefill', text);
+      location.assign('../#studio');
+      return;
+    }
     if (location.hash !== '#studio') location.hash = 'studio';
     updateRoute();
     assistant.prefill(text);

@@ -15,6 +15,7 @@ import shutil
 import sys
 
 from .science import md_job
+from .revision import source_commit
 
 
 _INPUTS = ("in.md", "structure.data", "md-config.json")
@@ -112,11 +113,8 @@ def _write_transport_metadata(directory, bundle):
 
 def _git_commit():
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1],
-            text=True, stderr=subprocess.DEVNULL, timeout=5,
-        ).strip()
-    except (OSError, subprocess.SubprocessError):
+        return source_commit()
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
 
